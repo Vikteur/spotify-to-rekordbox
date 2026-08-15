@@ -59,7 +59,7 @@ def build_rekordbox_xml(playlist_name: str, tracks: list[LibraryTrack]) -> str:
             attrs.append(f'TotalTime="{round(track.duration_sec)}"')
         attrs.append(f'Location="{_attr(path_to_location(track.path))}"')
         collection_lines.append(f'    <TRACK {" ".join(attrs)}/>')
-        key_lines.append(f'      <TRACK Key="{track_id}"/>')
+        key_lines.append(f'        <TRACK Key="{track_id}"/>')
 
     return "\n".join(
         [
