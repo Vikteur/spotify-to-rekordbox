@@ -15,7 +15,6 @@ export interface LibraryTrack {
   mtime_ms: number;
   bpm: number | null;
   musical_key: string | null;
-  source_id: number | null;
 }
 
 export interface Source {

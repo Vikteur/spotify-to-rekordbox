@@ -1,3 +1,4 @@
+import os
 import re
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -64,6 +65,25 @@ def _error(status: int, code: str, message: str) -> HTTPException:
     return HTTPException(status_code=status, detail={"code": code, "message": message})
 
 
+def _count_missing_files(tracks: list) -> int:
+    """How many imported paths aren't on this machine (drive not connected?).
+
+    Checks each directory once first: when a whole drive is absent — the common
+    case — that answers for every file under it without a stat per track.
+    """
+    directory_exists: dict[str, bool] = {}
+    missing = 0
+    for track in tracks:
+        parent = os.path.dirname(track.path)
+        present = directory_exists.get(parent)
+        if present is None:
+            present = os.path.isdir(parent)
+            directory_exists[parent] = present
+        if not present or not os.path.exists(track.path):
+            missing += 1
+    return missing
+
+
 _index_cache: tuple[int, LibraryIndex] | None = None
 
 
@@ -112,8 +132,7 @@ async def import_rekordbox_xml(request: Request, name: str = "rekordbox.xml") ->
     db.replace_source_tracks(source_id, tracks)
     LIBRARY.reload()
 
-    # Exports routinely reference drives that aren't plugged in right now.
-    missing = sum(1 for track in tracks if not Path(track.path).exists())
+    missing = _count_missing_files(tracks)
     return {
         "imported": len(tracks),
         "missing_files": missing,

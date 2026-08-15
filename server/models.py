@@ -28,7 +28,6 @@ class LibraryTrack(BaseModel):
     mtime_ms: int
     bpm: float | None = None          # rekordbox XML only
     musical_key: str | None = None    # rekordbox XML only (Tonality)
-    source_id: int | None = None
 
 
 class Source(BaseModel):

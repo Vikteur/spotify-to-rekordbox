@@ -60,7 +60,7 @@ The library is stored in `data/library.db` (SQLite) and reloaded at startup, so 
 - it's near-instant, no matter how big the collection is
 - rekordbox sometimes stores the version in a separate `Mix` field; that gets folded back into the title so the remix picker still works
 
-Each loaded source is listed with its track count and can be removed independently.
+Each loaded source is listed with its track count and can be removed independently. A file that appears in several sources is stored once but claimed by each, so removing one source only drops the tracks nothing else claims — and a folder rescan never blanks the BPM and key that came from rekordbox, since a scan can't observe those.
 
 ## Usage notes
 
@@ -103,7 +103,7 @@ python scripts/probe_spotify.py "https://open.spotify.com/playlist/<id>"
 ## Development
 
 ```bash
-.venv/bin/pytest           # 134 tests: parsers, scanner, database, matcher calibration, exports, API
+.venv/bin/pytest           # 139 tests: parsers, scanner, database, matcher calibration, exports, API
 npm run typecheck          # strict TS on the client
 node scripts/screenshot.mjs <music-folder>   # regenerate docs/screenshot.png (app must be running)
 ```
