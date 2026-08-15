@@ -32,10 +32,21 @@ class LibraryTrack(BaseModel):
 
 class Source(BaseModel):
     id: int
+    library_id: int
     kind: str                    # "folder" | "xml"
     label: str                   # folder path, or XML filename
     added_at: str
     track_count: int
+
+
+class LibraryInfo(BaseModel):
+    """One named music collection — typically one device."""
+
+    id: int
+    name: str
+    created_at: str
+    track_count: int
+    source_count: int
 
 
 class ScoredCandidate(BaseModel):

@@ -41,6 +41,20 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   library: () => request<LibrarySummary>('/api/library'),
+  createLibrary: (name: string) =>
+    request<LibrarySummary>('/api/libraries', {
+      method: 'POST',
+      body: JSON.stringify({ name }),
+    }),
+  selectLibrary: (id: number) =>
+    request<LibrarySummary>(`/api/libraries/${id}/select`, { method: 'POST' }),
+  renameLibrary: (id: number, name: string) =>
+    request<LibrarySummary>(`/api/libraries/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ name }),
+    }),
+  deleteLibrary: (id: number) =>
+    request<LibrarySummary>(`/api/libraries/${id}`, { method: 'DELETE' }),
   removeSource: (id: number) =>
     request<LibrarySummary>(`/api/library/sources/${id}`, { method: 'DELETE' }),
   importXml: async (file: File): Promise<XmlImportResult> => {

@@ -16,6 +16,11 @@ def temp_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     db.init()
 
 
+@pytest.fixture()
+def lib() -> int:
+    return db.create_library("MacBook")
+
+
 @pytest.fixture(scope="module")
 def index() -> LibraryIndex:
     return LibraryIndex(LIBRARY)
@@ -107,70 +112,100 @@ def test_no_preferences_leaves_matching_untouched(index: LibraryIndex) -> None:
 
 # --- storage ---------------------------------------------------------------
 
-def save(artist: str, title: str, track_id: str) -> None:
+def save(library_id: int, artist: str, title: str, track_id: str) -> None:
     db.save_preference(
-        signature_id(artist, title), signature_of(artist, title), artist, title, track_id
+        library_id,
+        signature_id(artist, title),
+        signature_of(artist, title),
+        artist,
+        title,
+        track_id,
     )
 
 
-def test_preferences_round_trip() -> None:
-    save("Artist One", "Anthem", "anthem-ext")
-    assert db.preference_map() == {signature_id("Artist One", "Anthem"): "anthem-ext"}
+def test_preferences_round_trip(lib: int) -> None:
+    save(lib, "Artist One", "Anthem", "anthem-ext")
+    assert db.preference_map(lib) == {signature_id("Artist One", "Anthem"): "anthem-ext"}
 
-    listed = db.list_preferences()
+    listed = db.list_preferences(lib)
     assert len(listed) == 1
     assert listed[0].artist == "Artist One"
     assert listed[0].track_id == "anthem-ext"
     assert listed[0].file_label is None  # that track isn't in the database here
 
 
-def test_choosing_again_overwrites_rather_than_duplicating() -> None:
-    save("Artist One", "Anthem", "anthem-ext")
-    save("Artist One", "Anthem", "anthem-club")
-    assert len(db.list_preferences()) == 1
-    assert db.preference_map()[signature_id("Artist One", "Anthem")] == "anthem-club"
+def test_choosing_again_overwrites_rather_than_duplicating(lib: int) -> None:
+    save(lib, "Artist One", "Anthem", "anthem-ext")
+    save(lib, "Artist One", "Anthem", "anthem-club")
+    assert len(db.list_preferences(lib)) == 1
+    assert db.preference_map(lib)[signature_id("Artist One", "Anthem")] == "anthem-club"
 
 
-def test_forgetting() -> None:
-    save("Artist One", "Anthem", "anthem-ext")
-    save("DJ Four", "Gecko", "gecko-ext")
-    assert db.delete_preference(signature_id("Artist One", "Anthem")) is True
-    assert db.delete_preference("nope") is False
-    assert len(db.list_preferences()) == 1
-    db.clear_preferences()
-    assert db.list_preferences() == []
+def test_each_library_keeps_its_own_choices(lib: int) -> None:
+    """The same song resolves to a different file per device, so a choice on
+    one library must not overwrite the other's."""
+    other = db.create_library("Studio PC")
+    save(lib, "Artist One", "Anthem", "mac-anthem-club")
+    save(other, "Artist One", "Anthem", "pc-anthem-ext")
+
+    key = signature_id("Artist One", "Anthem")
+    assert db.preference_map(lib)[key] == "mac-anthem-club"
+    assert db.preference_map(other)[key] == "pc-anthem-ext"
+
+    db.clear_preferences(other)
+    assert db.preference_map(lib)[key] == "mac-anthem-club"  # untouched
 
 
-def test_preferences_survive_removing_a_library_source() -> None:
+def test_deleting_a_library_drops_only_its_choices(lib: int) -> None:
+    other = db.create_library("Studio PC")
+    save(lib, "Artist One", "Anthem", "mac-anthem")
+    save(other, "Artist One", "Anthem", "pc-anthem")
+    db.delete_library(other)
+    assert len(db.list_preferences(lib)) == 1
+
+
+def test_forgetting(lib: int) -> None:
+    save(lib, "Artist One", "Anthem", "anthem-ext")
+    save(lib, "DJ Four", "Gecko", "gecko-ext")
+    assert db.delete_preference(lib, signature_id("Artist One", "Anthem")) is True
+    assert db.delete_preference(lib, "nope") is False
+    assert len(db.list_preferences(lib)) == 1
+    db.clear_preferences(lib)
+    assert db.list_preferences(lib) == []
+
+
+def test_preferences_survive_removing_a_library_source(lib: int) -> None:
     """Removing a source must not erase decisions — the file may come back."""
     from server.models import LibraryTrack
 
-    source = db.upsert_source("folder", "/music")
+    source = db.upsert_source(lib, "folder", "/music")
     track = LibraryTrack(
         id="anthem-ext", path="/music/anthem-ext.mp3", filename="anthem-ext", ext="mp3",
         artist="Artist One", title="Anthem (Extended Mix)", album=None, duration_sec=330.0,
         bitrate_kbps=320, tag_source="tags", size_bytes=1, mtime_ms=1,
     )
     db.replace_source_tracks(source, [track])
-    save("Artist One", "Anthem", "anthem-ext")
-    assert db.list_preferences()[0].file_label == "anthem-ext.mp3"
+    save(lib, "Artist One", "Anthem", "anthem-ext")
+    assert db.list_preferences(lib)[0].file_label == "anthem-ext.mp3"
 
     db.delete_source(source)
 
-    remaining = db.list_preferences()
+    remaining = db.list_preferences(lib)
     assert len(remaining) == 1
     assert remaining[0].track_id == "anthem-ext"
     assert remaining[0].file_label is None  # shown as currently unavailable
 
     # Re-adding the same file restores the choice, because ids come from paths.
-    db.replace_source_tracks(db.upsert_source("folder", "/music"), [track])
-    assert db.list_preferences()[0].file_label == "anthem-ext.mp3"
+    db.replace_source_tracks(db.upsert_source(lib, "folder", "/music"), [track])
+    assert db.list_preferences(lib)[0].file_label == "anthem-ext.mp3"
 
 
-def test_pasted_text_and_spotify_reach_the_same_preference(index: LibraryIndex) -> None:
+def test_pasted_text_and_spotify_reach_the_same_preference(
+    index: LibraryIndex, lib: int
+) -> None:
     """A pasted 'Artist - Title' line has no duration, but it is the same song."""
-    save("Artist One", "Anthem", "anthem-ext")
-    preferences = db.preference_map()
+    save(lib, "Artist One", "Anthem", "anthem-ext")
+    preferences = db.preference_map(lib)
     from_spotify = match_one(query("Anthem", "Artist One", 240), index, preferences)
     from_paste = match_one(
         PlaylistTrackInput(index=0, artist="Artist One", title="Anthem"), index, preferences

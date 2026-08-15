@@ -59,6 +59,7 @@ export default function App() {
   const [scanError, setScanError] = useState('');
   const [libNote, setLibNote] = useState('');
   const [importing, setImporting] = useState(false);
+  const [newLibName, setNewLibName] = useState('');
   const xmlInput = useRef<HTMLInputElement | null>(null);
   const polling = useRef<number | null>(null);
 
@@ -113,6 +114,48 @@ export default function App() {
   function libraryChanged() {
     setResults(null);
     setSelections({});
+  }
+
+  /** Any action that changes which library is active or what's in it. */
+  async function withLibrary(action: () => Promise<LibrarySummary>) {
+    setScanError('');
+    setLibNote('');
+    libraryChanged();
+    try {
+      const summary = await action();
+      setLib(summary);
+      setScan(null);
+      const { preferences } = await api.preferences();
+      setPrefs(preferences);
+      setRemembered({});
+    } catch (error) {
+      setScanError(error instanceof ApiError ? error.message : String(error));
+    }
+  }
+
+  async function createLibrary() {
+    const name = newLibName.trim();
+    if (!name) return;
+    await withLibrary(() => api.createLibrary(name));
+    setNewLibName('');
+  }
+
+  async function renameLibrary() {
+    if (!lib?.active_library_id) return;
+    const name = window.prompt('Rename library', lib.active_library_name ?? '');
+    if (name && name.trim()) {
+      await withLibrary(() => api.renameLibrary(lib.active_library_id!, name.trim()));
+    }
+  }
+
+  async function deleteLibrary() {
+    if (!lib?.active_library_id) return;
+    const message =
+      `Delete the library "${lib.active_library_name}"?\n\n` +
+      'Its scanned tracks and remembered versions are removed. Your music files are not touched.';
+    if (window.confirm(message)) {
+      await withLibrary(() => api.deleteLibrary(lib.active_library_id!));
+    }
   }
 
   async function startScan(force: boolean) {
@@ -288,6 +331,8 @@ export default function App() {
 
   const scanned = scan?.state === 'done' ? scan.scanned : undefined;
   const hasLibrary = (lib?.track_count ?? 0) > 0;
+  const activeId = lib?.active_library_id ?? null;
+  const libraries = lib?.libraries ?? [];
 
   return (
     <main className="mx-auto max-w-5xl px-4 py-8 text-sm text-gray-900">
@@ -299,9 +344,64 @@ export default function App() {
 
       {/* 1 — Library */}
       <section className="mt-8">
-        <h2 className="text-lg font-semibold">1. Your library</h2>
+        <h2 className="text-lg font-semibold">1. Your libraries</h2>
 
-        {hasLibrary ? (
+        {libraries.length > 0 ? (
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <label htmlFor="library-picker" className="text-gray-600">
+              Match against:
+            </label>
+            <select
+              id="library-picker"
+              className="rounded border border-gray-300 px-2 py-1.5"
+              value={activeId ?? ''}
+              onChange={(event) => withLibrary(() => api.selectLibrary(Number(event.target.value)))}
+            >
+              {libraries.map((library) => (
+                <option key={library.id} value={library.id}>
+                  {library.name} — {library.track_count.toLocaleString()} tracks
+                </option>
+              ))}
+            </select>
+            <button
+              className="rounded border border-gray-300 px-2 py-1.5 text-xs hover:bg-gray-50"
+              onClick={renameLibrary}
+            >
+              Rename
+            </button>
+            <button
+              className="rounded border border-gray-300 px-2 py-1.5 text-xs hover:bg-gray-50"
+              onClick={deleteLibrary}
+            >
+              Delete
+            </button>
+          </div>
+        ) : (
+          <p className="mt-2 text-gray-600">
+            Name your first library — one per device works well (“MacBook”, “Studio PC”).
+          </p>
+        )}
+
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <input
+            className="w-56 rounded border border-gray-300 px-3 py-1.5"
+            placeholder="New library name, e.g. Studio PC"
+            value={newLibName}
+            onChange={(event) => setNewLibName(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') createLibrary();
+            }}
+          />
+          <button
+            className="rounded border border-gray-300 px-3 py-1.5 disabled:opacity-40"
+            disabled={!newLibName.trim()}
+            onClick={createLibrary}
+          >
+            + Create library
+          </button>
+        </div>
+
+        {activeId !== null && (hasLibrary ? (
           <div className="mt-2 rounded border border-gray-200">
             <p className="border-b border-gray-100 px-3 py-2 text-gray-700">
               <span className="font-medium">{lib!.track_count.toLocaleString()} tracks</span> saved (
@@ -330,27 +430,30 @@ export default function App() {
           </div>
         ) : (
           <p className="mt-2 text-gray-500">
-            Nothing loaded yet — scan a music folder, import a rekordbox XML export, or both.
+            “{lib?.active_library_name}” is empty — scan a music folder, import a rekordbox XML
+            export, or both.
           </p>
-        )}
+        ))}
 
         <div className="mt-3 flex gap-2">
           <input
-            className="w-full rounded border border-gray-300 px-3 py-2"
+            className="w-full rounded border border-gray-300 px-3 py-2 disabled:bg-gray-50"
             placeholder="e.g. /Users/viktor/Music/DJ or C:\Music (iTunes: ~/Music/Music/Media.localized)"
             value={folder}
+            disabled={activeId === null}
             onChange={(event) => setFolder(event.target.value)}
           />
           <button
             className="rounded bg-gray-900 px-4 py-2 font-medium text-white disabled:opacity-40"
-            disabled={!folder.trim() || scan?.state === 'scanning'}
+            disabled={activeId === null || !folder.trim() || scan?.state === 'scanning'}
             onClick={() => startScan(false)}
+            title={activeId === null ? 'Create a library first' : undefined}
           >
             Scan folder
           </button>
           <button
             className="rounded border border-gray-300 px-3 py-2 disabled:opacity-40"
-            disabled={!folder.trim() || scan?.state === 'scanning'}
+            disabled={activeId === null || !folder.trim() || scan?.state === 'scanning'}
             onClick={() => startScan(true)}
             title="Re-read every file instead of trusting the saved database"
           >
@@ -365,7 +468,7 @@ export default function App() {
             type="file"
             accept=".xml,text/xml,application/xml"
             className="max-w-xs text-xs file:mr-2 file:rounded file:border file:border-gray-300 file:bg-white file:px-2 file:py-1"
-            disabled={importing}
+            disabled={importing || activeId === null}
             onChange={(event) => {
               const file = event.target.files?.[0];
               if (file) importXml(file);

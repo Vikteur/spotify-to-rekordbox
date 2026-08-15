@@ -28,9 +28,9 @@ from server.spotify.parse_embed import (
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    # Restore the library from disk so a restart needs no rescan.
+    # Restore the active library from disk so a restart needs no rescan.
     db.init()
-    LIBRARY.reload()
+    LIBRARY.load()
     yield
 
 
@@ -46,6 +46,11 @@ MAX_XML_BYTES = 256 * 1024 * 1024
 class ScanRequest(BaseModel):
     folder: str
     force: bool = False
+    library_id: int | None = None   # defaults to the active library
+
+
+class LibraryRequest(BaseModel):
+    name: str
 
 
 class PlaylistRequest(BaseModel):
@@ -107,24 +112,86 @@ def health() -> dict:
     return {"ok": True}
 
 
-# --- library sources -------------------------------------------------------
+# --- libraries -------------------------------------------------------------
+
+def _require_library(library_id: int | None) -> int:
+    """The library a write targets: the one asked for, else the active one."""
+    if library_id is None:
+        library_id = LIBRARY.id
+    if library_id is None:
+        raise _error(
+            409, "NO_LIBRARY_SELECTED", "Create a library first, then add music to it."
+        )
+    if not db.library_exists(library_id):
+        raise _error(404, "NO_LIBRARY", f"No library with id {library_id}.")
+    return library_id
+
 
 @app.get("/api/library")
 def library() -> dict:
     return LIBRARY.summary()
 
 
+@app.post("/api/libraries", status_code=201)
+def create_library(request: LibraryRequest) -> dict:
+    name = request.name.strip()
+    if not name:
+        raise _error(400, "EMPTY_NAME", "Give the library a name.")
+    try:
+        library_id = db.create_library(name)
+    except db.DuplicateLibraryName as exc:
+        raise _error(409, "DUPLICATE_NAME", str(exc))
+    LIBRARY.load(library_id)  # a new library becomes the active one
+    return LIBRARY.summary()
+
+
+@app.post("/api/libraries/{library_id}/select")
+def select_library(library_id: int) -> dict:
+    if not db.library_exists(library_id):
+        raise _error(404, "NO_LIBRARY", f"No library with id {library_id}.")
+    LIBRARY.load(library_id)
+    return LIBRARY.summary()
+
+
+@app.patch("/api/libraries/{library_id}")
+def rename_library(library_id: int, request: LibraryRequest) -> dict:
+    name = request.name.strip()
+    if not name:
+        raise _error(400, "EMPTY_NAME", "Give the library a name.")
+    try:
+        renamed = db.rename_library(library_id, name)
+    except db.DuplicateLibraryName as exc:
+        raise _error(409, "DUPLICATE_NAME", str(exc))
+    if not renamed:
+        raise _error(404, "NO_LIBRARY", f"No library with id {library_id}.")
+    LIBRARY.load(LIBRARY.id)
+    return LIBRARY.summary()
+
+
+@app.delete("/api/libraries/{library_id}")
+def delete_library(library_id: int) -> dict:
+    if not db.delete_library(library_id):
+        raise _error(404, "NO_LIBRARY", f"No library with id {library_id}.")
+    LIBRARY.load(None if LIBRARY.id == library_id else LIBRARY.id)
+    return LIBRARY.summary()
+
+
+# --- library sources -------------------------------------------------------
+
 @app.delete("/api/library/sources/{source_id}")
 def remove_source(source_id: int) -> dict:
     if not db.delete_source(source_id):
         raise _error(404, "NO_SOURCE", f"No library source with id {source_id}.")
-    LIBRARY.reload()
+    LIBRARY.load(LIBRARY.id)
     return LIBRARY.summary()
 
 
 @app.post("/api/library/xml")
-async def import_rekordbox_xml(request: Request, name: str = "rekordbox.xml") -> dict:
+async def import_rekordbox_xml(
+    request: Request, name: str = "rekordbox.xml", library_id: int | None = None
+) -> dict:
     """Import a rekordbox collection XML export (raw request body, not multipart)."""
+    target = _require_library(library_id)
     data = await request.body()
     if not data:
         raise _error(400, "EMPTY_FILE", "No XML content was uploaded.")
@@ -135,9 +202,9 @@ async def import_rekordbox_xml(request: Request, name: str = "rekordbox.xml") ->
     except RekordboxXmlError as exc:
         raise _error(400, "BAD_XML", str(exc))
 
-    source_id = db.upsert_source("xml", name)
+    source_id = db.upsert_source(target, "xml", name)
     db.replace_source_tracks(source_id, tracks)
-    LIBRARY.reload()
+    LIBRARY.load(LIBRARY.id)
 
     missing = _count_missing_files(tracks)
     return {
@@ -152,6 +219,7 @@ async def import_rekordbox_xml(request: Request, name: str = "rekordbox.xml") ->
 
 @app.post("/api/scan", status_code=202)
 def start_scan(request: ScanRequest) -> dict:
+    target = _require_library(request.library_id)
     folder = request.folder.strip().strip("\"'")
     if not folder:
         raise _error(400, "EMPTY_FOLDER", "Enter a folder path to scan.")
@@ -161,10 +229,10 @@ def start_scan(request: ScanRequest) -> dict:
             404, "FOLDER_NOT_FOUND", f"Not a folder (or not readable): {path}"
         )
     try:
-        SCANNER.start_scan(str(path), force=request.force)
+        SCANNER.start_scan(target, str(path), force=request.force)
     except ScanInProgress:
         raise _error(409, "SCAN_IN_PROGRESS", "A scan is already running.")
-    return {"started": True}
+    return {"started": True, "library_id": target}
 
 
 @app.get("/api/scan/status")
@@ -196,49 +264,61 @@ def match(request: MatchRequest) -> dict:
         raise _error(
             409,
             "NO_LIBRARY",
-            "Add a library first: scan a folder or import a rekordbox XML.",
+            "The selected library is empty: scan a folder or import a rekordbox XML.",
         )
     if not request.tracks:
         raise _error(400, "NO_TRACKS", "The playlist has no tracks.")
-    results = match_playlist(request.tracks, _get_index(), db.preference_map())
+    results = match_playlist(
+        request.tracks, _get_index(), db.preference_map(LIBRARY.id)
+    )
     return {
         "results": [result.model_dump() for result in results],
         "library_size": len(LIBRARY.tracks),
+        "library_name": LIBRARY.name,
     }
 
 
 # --- remembered version choices --------------------------------------------
 
+def _preferences_payload() -> dict:
+    if LIBRARY.id is None:
+        return {"preferences": []}
+    return {"preferences": [p.model_dump() for p in db.list_preferences(LIBRARY.id)]}
+
+
 @app.get("/api/preferences")
 def get_preferences() -> dict:
-    return {"preferences": [p.model_dump() for p in db.list_preferences()]}
+    return _preferences_payload()
 
 
 @app.post("/api/preferences")
 def save_preference(request: PreferenceRequest) -> dict:
-    """Remember this file as the default for this song from now on."""
+    """Remember this file as the default for this song in the active library."""
+    library_id = _require_library(None)
     if request.track_id not in LIBRARY.by_id:
         raise _error(400, "UNKNOWN_TRACK", f"Unknown track id {request.track_id!r}.")
     db.save_preference(
+        library_id,
         signature_id(request.artist, request.title),
         signature_of(request.artist, request.title),
         request.artist,
         request.title,
         request.track_id,
     )
-    return {"preferences": [p.model_dump() for p in db.list_preferences()]}
+    return _preferences_payload()
 
 
 @app.delete("/api/preferences/{preference_id}")
 def forget_preference(preference_id: str) -> dict:
-    if not db.delete_preference(preference_id):
+    library_id = _require_library(None)
+    if not db.delete_preference(library_id, preference_id):
         raise _error(404, "NO_PREFERENCE", "No remembered choice with that id.")
-    return {"preferences": [p.model_dump() for p in db.list_preferences()]}
+    return _preferences_payload()
 
 
 @app.delete("/api/preferences")
 def forget_all_preferences() -> dict:
-    db.clear_preferences()
+    db.clear_preferences(_require_library(None))
     return {"preferences": []}
 
 

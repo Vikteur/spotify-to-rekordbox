@@ -14,15 +14,15 @@ from tests.helpers import make_audio_tree
 def library(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setattr(db, "DB_PATH", tmp_path / "library.db")
     db.init()
-    LIBRARY.reload()
+    LIBRARY.load(db.create_library("MacBook"))
     root = tmp_path / "music"
     make_audio_tree(root)
     return root
 
 
-def scan(root: Path, force: bool = False) -> Scanner:
+def scan(root: Path, force: bool = False, library_id: int | None = None) -> Scanner:
     scanner = Scanner()
-    scanner.start_scan(str(root), force=force)
+    scanner.start_scan(library_id or LIBRARY.id, str(root), force=force)
     scanner.wait()
     return scanner
 
@@ -81,13 +81,27 @@ def test_library_survives_a_restart(library: Path) -> None:
     """The whole point of the database: a fresh process needs no rescan."""
     scan(library)
 
-    from server.library import Library
+    from server.library import ActiveLibrary
 
-    restarted = Library()
-    restarted.reload()
+    restarted = ActiveLibrary()
+    restarted.load()
     assert len(restarted.tracks) == 6
     assert restarted.is_loaded() is True
+    assert restarted.name == "MacBook"
     assert restarted.summary()["sources"][0]["kind"] == "folder"
+
+
+def test_scanning_into_a_second_library_keeps_them_separate(library: Path) -> None:
+    scan(library)
+    other = db.create_library("Studio PC")
+    scan(library, library_id=other)
+
+    counts = {info.name: info.track_count for info in db.list_libraries()}
+    assert counts == {"MacBook": 6, "Studio PC": 6}
+    # Both libraries reference the same files, stored once.
+    assert len(db.all_tracks()) == 6
+    # The active library is unchanged by scanning into another one.
+    assert LIBRARY.id != other
 
 
 def test_rescanning_a_folder_does_not_duplicate_tracks(library: Path) -> None:
@@ -95,14 +109,14 @@ def test_rescanning_a_folder_does_not_duplicate_tracks(library: Path) -> None:
     scan(library)
     scan(library, force=True)
     assert len(LIBRARY.tracks) == 6
-    assert len(db.list_sources()) == 1
+    assert len(db.list_sources(LIBRARY.id)) == 1
 
 
 def test_missing_folder_errors_cleanly(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(db, "DB_PATH", tmp_path / "library.db")
     db.init()
     scanner = Scanner()
-    scanner.start_scan(str(tmp_path / "nope"))
+    scanner.start_scan(db.create_library("Empty"), str(tmp_path / "nope"))
     scanner.wait()
     status = scanner.status()
     assert status["state"] == "done"

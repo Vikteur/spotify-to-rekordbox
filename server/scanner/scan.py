@@ -32,12 +32,13 @@ class Scanner:
     def is_scanning(self) -> bool:
         return self.status()["state"] == "scanning"
 
-    def start_scan(self, folder: str, force: bool = False) -> None:
+    def start_scan(self, library_id: int, folder: str, force: bool = False) -> None:
         with self._lock:
             if self._thread is not None and self._thread.is_alive():
                 raise ScanInProgress
             self._status = {
                 "state": "scanning",
+                "library_id": library_id,
                 "folder": folder,
                 "found": 0,
                 "parsed": 0,
@@ -46,7 +47,7 @@ class Scanner:
                 "errors": [],
             }
             self._thread = threading.Thread(
-                target=self._run, args=(folder, force), daemon=True
+                target=self._run, args=(library_id, folder, force), daemon=True
             )
             self._thread.start()
 
@@ -60,14 +61,14 @@ class Scanner:
         with self._lock:
             self._status.update(fields)
 
-    def _run(self, folder: str, force: bool) -> None:
+    def _run(self, library_id: int, folder: str, force: bool) -> None:
         started = time.monotonic()
         try:
             files, drm_count, walk_errors = walk_library(Path(folder))
             errors = [{"file": "", "message": message} for message in walk_errors]
             self._set(found=len(files), skipped_drm=drm_count, errors=errors)
 
-            source_id = db.upsert_source("folder", folder)
+            source_id = db.upsert_source(library_id, "folder", folder)
             known = {} if force else db.source_tracks(source_id)
 
             tracks: list[LibraryTrack] = []
@@ -94,7 +95,8 @@ class Scanner:
 
             tracks.sort(key=lambda track: track.path)
             db.replace_source_tracks(source_id, tracks)
-            LIBRARY.reload()
+            if LIBRARY.id == library_id:
+                LIBRARY.load(library_id)
 
             self._set(
                 state="done",

@@ -2,7 +2,7 @@
 
 A small local webapp that turns a **public Spotify playlist** into a **rekordbox playlist built from music files you already own**:
 
-1. Load your library — **scan a music folder**, **import a rekordbox XML export**, or both
+1. Name a library (one per device) and load it — **scan a music folder**, **import a rekordbox XML export**, or both
 2. Paste a Spotify playlist link (no Spotify account or API key needed)
 3. It fuzzy-matches each Spotify track against your library; when several versions exist (original + remixes), **you pick one from a dropdown** — and it **remembers that pick** as the song's default for every future playlist
 4. Download a `.m3u8` or rekordbox `.xml` playlist and import it into rekordbox
@@ -47,9 +47,15 @@ npm start          # → open http://127.0.0.1:8000
 
 Both need the venv active (the server runs via `python -m uvicorn`). The server binds to `127.0.0.1` only — it can read your local folders, so never expose it on a network.
 
-## Your library
+## Your libraries
 
-The library is stored in `data/library.db` (SQLite) and reloaded at startup, so **restarting the app never costs you a rescan**. You can load it from either source — or both at once, merged and deduplicated by file path:
+Music is organised into **named libraries** — normally one per device ("MacBook", "Studio PC", "USB drive"). You name a library before putting anything in it, and the picker at the top of section 1 chooses which one a playlist is matched against.
+
+Everything is stored in `data/library.db` (SQLite) and reloaded at startup, so **restarting the app never costs you a rescan**, and the library you had selected is still selected.
+
+Libraries are fully independent: their tracks, their sources, and their remembered version choices. That last one matters — the same song resolves to a different file on each device, so a single shared list of choices would have your devices overwriting each other. Deleting a library removes its scanned data and choices; it never touches your music files.
+
+Each library is built from one or more sources — a scanned folder, an imported rekordbox XML, or several of each, merged and deduplicated by file path:
 
 **Scan a folder.** Reads tags (and filenames, for untagged files) from every audio file underneath. The first pass over a big folder takes a while; afterwards each file is re-read only when its size or modification time changed, so repeat scans take seconds. **Force rescan** ignores that and re-reads everything.
 
@@ -70,7 +76,7 @@ Each loaded source is listed with its track count and can be removed independent
 - **Matching**: green *auto* rows are confident matches (still overridable); amber *pick one* rows have several plausible files — that's the remix picker; *no match* rows list weak guesses if any. The dropdown shows each candidate's version (`[x remix]`, `[extended]`…), duration difference vs Spotify, format/bitrate, and score.
 - **Remembered versions**: when you pick a version for a song, that file becomes the song's default in every future playlist — those rows come back pre-selected with a purple *remembered* chip. The dropdown still lists the alternatives, and choosing a different one overwrites the default. Section 1 lists everything you've taught it, with **Forget** per entry and **Forget all**.
 
-  The choice is keyed on artist + core title + version, so it survives whichever way you load the playlist (Spotify link or pasted text), and different versions stay independent: teaching it your favourite *Strobe* says nothing about *Strobe (Radio Edit)*. Featured artists are ignored in that key, because playlists list them inconsistently. Choices also survive removing a library source — if the file comes back, so does the preference.
+  The choice is keyed on artist + core title + version, so it survives whichever way you load the playlist (Spotify link or pasted text), and different versions stay independent: teaching it your favourite *Strobe* says nothing about *Strobe (Radio Edit)*. Featured artists are ignored in that key, because playlists list them inconsistently. Choices also survive removing a library source — if the file comes back, so does the preference. They are **per library**, so each device learns its own.
 
 ## Importing into rekordbox
 
@@ -106,7 +112,7 @@ python scripts/probe_spotify.py "https://open.spotify.com/playlist/<id>"
 ## Development
 
 ```bash
-.venv/bin/pytest           # 156 tests: parsers, scanner, database, matcher calibration, preferences, exports, API
+.venv/bin/pytest           # 174 tests: parsers, scanner, database, libraries, matcher calibration, preferences, exports, API
 npm run typecheck          # strict TS on the client
 node scripts/screenshot.mjs <music-folder>   # regenerate docs/screenshot.png (app must be running)
 ```

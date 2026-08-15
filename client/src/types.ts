@@ -19,15 +19,27 @@ export interface LibraryTrack {
 
 export interface Source {
   id: number;
+  library_id: number;
   kind: 'folder' | 'xml';
   label: string;
   added_at: string;
   track_count: number;
 }
 
+export interface LibraryInfo {
+  id: number;
+  name: string;
+  created_at: string;
+  track_count: number;
+  source_count: number;
+}
+
 export interface LibrarySummary {
+  active_library_id: number | null;
+  active_library_name: string | null;
   track_count: number;
   by_ext: Record<string, number>;
+  libraries: LibraryInfo[];
   sources: Source[];
 }
 

@@ -9,7 +9,7 @@ from server import db
 from server.library import LIBRARY
 from server.scanner.scan import Scanner
 from server.spotify.fetch import SpotifyFetchError
-from tests.helpers import make_audio_tree
+from tests.helpers import make_audio_tree, write_mp3
 from tests.test_rekordbox_import import collection_xml
 
 
@@ -18,7 +18,18 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     monkeypatch.setattr(db, "DB_PATH", tmp_path / "library.db")
     monkeypatch.setattr(main, "SCANNER", Scanner())
     monkeypatch.setattr(main, "_index_cache", None)
-    with TestClient(main.app) as client:  # runs the startup hook (db.init + reload)
+    with TestClient(main.app) as client:  # runs the startup hook (db.init + load)
+        client.post("/api/libraries", json={"name": "MacBook"})
+        yield client
+
+
+@pytest.fixture()
+def bare_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
+    """A client with no libraries at all (fresh install)."""
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "bare.db")
+    monkeypatch.setattr(main, "SCANNER", Scanner())
+    monkeypatch.setattr(main, "_index_cache", None)
+    with TestClient(main.app) as client:
         yield client
 
 
@@ -266,13 +277,126 @@ def test_scan_trims_pasted_quotes(client: TestClient, library: Path) -> None:
     main.SCANNER.wait()
 
 
-def test_match_before_any_library_409(client: TestClient) -> None:
-    LIBRARY.reload()  # empty database
+def test_match_with_an_empty_library_409(client: TestClient) -> None:
     response = client.post(
         "/api/match", json={"tracks": [{"index": 0, "artist": "A", "title": "B"}]}
     )
     assert response.status_code == 409
     assert response.json()["detail"]["code"] == "NO_LIBRARY"
+
+
+# --- named libraries -------------------------------------------------------
+
+def test_fresh_install_requires_naming_a_library_first(
+    bare_client: TestClient, tmp_path: Path
+) -> None:
+    summary = bare_client.get("/api/library").json()
+    assert summary["libraries"] == []
+    assert summary["active_library_id"] is None
+
+    blocked = bare_client.post("/api/scan", json={"folder": str(tmp_path)})
+    assert blocked.status_code == 409
+    assert blocked.json()["detail"]["code"] == "NO_LIBRARY_SELECTED"
+
+    created = bare_client.post("/api/libraries", json={"name": "Studio PC"})
+    assert created.status_code == 201
+    assert created.json()["active_library_name"] == "Studio PC"
+    assert bare_client.post("/api/libraries", json={"name": "  "}).status_code == 400
+
+
+def test_library_names_must_be_unique(client: TestClient) -> None:
+    duplicate = client.post("/api/libraries", json={"name": "MacBook"})
+    assert duplicate.status_code == 409
+    assert duplicate.json()["detail"]["code"] == "DUPLICATE_NAME"
+
+
+def test_switching_library_changes_what_a_playlist_matches_against(
+    client: TestClient, library: Path, tmp_path: Path
+) -> None:
+    scan_and_wait(client, library)
+    macbook = client.get("/api/library").json()["active_library_id"]
+
+    # A second device whose folder holds a different track.
+    other_root = tmp_path / "studio"
+    (other_root / "House").mkdir(parents=True)
+    write_mp3(other_root / "House" / "studio-only.mp3",
+              artist="Studio Artist", title="Studio Only")
+    studio = client.post("/api/libraries", json={"name": "Studio PC"}).json()[
+        "active_library_id"
+    ]
+    scan_and_wait(client, other_root)
+
+    tracks = [
+        {"index": 0, "artist": "Étienne de Crécy", "title": "Am I Wrong"},
+        {"index": 1, "artist": "Studio Artist", "title": "Studio Only"},
+    ]
+    def filenames(result: dict) -> set[str]:
+        return {c["track"]["filename"] for c in result["candidates"]}
+
+    on_studio = client.post("/api/match", json={"tracks": tracks}).json()
+    assert on_studio["library_name"] == "Studio PC"
+    assert on_studio["results"][1]["bucket"] == "auto"
+    assert "studio-only" in filenames(on_studio["results"][1])
+    # The MacBook file is not reachable from this library at all.
+    assert "am-i-wrong" not in filenames(on_studio["results"][0])
+
+    client.post(f"/api/libraries/{macbook}/select")
+    on_macbook = client.post("/api/match", json={"tracks": tracks}).json()
+    assert on_macbook["library_name"] == "MacBook"
+    assert on_macbook["results"][0]["bucket"] == "auto"
+    assert "am-i-wrong" in filenames(on_macbook["results"][0])
+    assert "studio-only" not in filenames(on_macbook["results"][1])
+    assert client.post("/api/libraries/9999/select").status_code == 404
+
+
+def test_remembered_versions_do_not_leak_between_libraries(
+    client: TestClient, library: Path
+) -> None:
+    """Each device resolves a song to its own file, so the choices must not
+    overwrite one another."""
+    scan_and_wait(client, library)
+    macbook = client.get("/api/library").json()["active_library_id"]
+    song = {"index": 0, "artist": "Purple Disco Machine", "title": "Substitution"}
+    chosen = client.post("/api/match", json={"tracks": [song]}).json()["results"][0][
+        "candidates"
+    ][0]["track"]["id"]
+    client.post(
+        "/api/preferences",
+        json={"artist": song["artist"], "title": song["title"], "track_id": chosen},
+    )
+    assert len(client.get("/api/preferences").json()["preferences"]) == 1
+
+    studio = client.post("/api/libraries", json={"name": "Studio PC"}).json()[
+        "active_library_id"
+    ]
+    assert client.get("/api/preferences").json()["preferences"] == []  # its own slate
+
+    client.post(f"/api/libraries/{macbook}/select")
+    assert len(client.get("/api/preferences").json()["preferences"]) == 1
+    assert (
+        client.post("/api/match", json={"tracks": [song]}).json()["results"][0][
+            "from_preference"
+        ]
+        is True
+    )
+    assert studio != macbook
+
+
+def test_rename_and_delete_library(client: TestClient, library: Path) -> None:
+    scan_and_wait(client, library)
+    macbook = client.get("/api/library").json()["active_library_id"]
+
+    renamed = client.patch(f"/api/libraries/{macbook}", json={"name": "MacBook Pro"})
+    assert renamed.status_code == 200
+    assert renamed.json()["active_library_name"] == "MacBook Pro"
+    assert renamed.json()["track_count"] == 6  # rename does not disturb contents
+
+    client.post("/api/libraries", json={"name": "Spare"})
+    deleted = client.delete(f"/api/libraries/{macbook}")
+    assert deleted.status_code == 200
+    assert [lib["name"] for lib in deleted.json()["libraries"]] == ["Spare"]
+    assert deleted.json()["active_library_name"] == "Spare"  # falls back
+    assert client.delete(f"/api/libraries/{macbook}").status_code == 404
 
 
 def test_spotify_route_success(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
