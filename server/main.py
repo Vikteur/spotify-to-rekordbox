@@ -16,6 +16,11 @@ from server.matcher.index import LibraryIndex
 from server.matcher.match import match_playlist
 from server.matcher.signature import signature_id, signature_of
 from server.models import PlaylistTrackInput
+from server.playlist_import import (
+    PlaylistImportError,
+    parse_playlist,
+    resolve_entries,
+)
 from server.rekordbox_import import RekordboxXmlError, parse_collection
 from server.scanner.scan import SCANNER, ScanInProgress
 from server.spotify.fetch import SpotifyFetchError, fetch_playlist
@@ -59,6 +64,7 @@ class PlaylistRequest(BaseModel):
 
 class MatchRequest(BaseModel):
     tracks: list[PlaylistTrackInput]
+    playlist_id: int | None = None   # narrow matching to one imported playlist
 
 
 class ExportRequest(BaseModel):
@@ -96,15 +102,24 @@ def _count_missing_files(tracks: list) -> int:
     return missing
 
 
-_index_cache: tuple[int, LibraryIndex] | None = None
+_index_cache: tuple[int, int | None, LibraryIndex] | None = None
 
 
-def _get_index() -> LibraryIndex:
+def _get_index(playlist_id: int | None = None) -> LibraryIndex:
+    """The matching index, optionally narrowed to one imported playlist."""
     global _index_cache
     generation = LIBRARY.generation
-    if _index_cache is None or _index_cache[0] != generation:
-        _index_cache = (generation, LibraryIndex(LIBRARY.tracks))
-    return _index_cache[1]
+    if (
+        _index_cache is None
+        or _index_cache[0] != generation
+        or _index_cache[1] != playlist_id
+    ):
+        tracks = LIBRARY.tracks
+        if playlist_id is not None:
+            allowed = db.playlist_track_ids(playlist_id)
+            tracks = [track for track in tracks if track.id in allowed]
+        _index_cache = (generation, playlist_id, LibraryIndex(tracks))
+    return _index_cache[2]
 
 
 @app.get("/api/health")
@@ -215,6 +230,65 @@ async def import_rekordbox_xml(
     }
 
 
+# --- imported rekordbox playlists ------------------------------------------
+
+@app.post("/api/library/playlists")
+async def import_playlist(
+    request: Request, name: str = "", library_id: int | None = None
+) -> dict:
+    """Import a playlist exported from rekordbox (raw body, not multipart)."""
+    target = _require_library(library_id)
+    if not LIBRARY.is_loaded():
+        raise _error(
+            409,
+            "NO_LIBRARY",
+            "Scan or import your music first — a playlist is matched against it.",
+        )
+    data = await request.body()
+    if len(data) > MAX_XML_BYTES:
+        raise _error(413, "FILE_TOO_LARGE", "That playlist file is unexpectedly large.")
+    try:
+        default_name, entries = parse_playlist(data, name)
+    except PlaylistImportError as exc:
+        raise _error(400, "BAD_PLAYLIST", str(exc))
+
+    resolved, missing = resolve_entries(entries, _get_index(), LIBRARY.by_id)
+    if not resolved:
+        raise _error(
+            400,
+            "NOTHING_RESOLVED",
+            f"None of the {len(entries)} tracks in that playlist are in "
+            f"“{LIBRARY.name}”. Is it a playlist from a different device?",
+        )
+    playlist_id = db.replace_playlist(target, default_name, resolved, len(missing))
+    return {
+        "playlist_id": playlist_id,
+        "name": default_name,
+        "resolved": len(resolved),
+        "missing": len(missing),
+        "missing_examples": [
+            f"{entry.artist} - {entry.title}".strip(" -") or (entry.path or "?")
+            for entry in missing[:5]
+        ],
+        "playlists": [p.model_dump() for p in db.list_playlists(target)],
+    }
+
+
+@app.get("/api/library/playlists")
+def get_playlists() -> dict:
+    if LIBRARY.id is None:
+        return {"playlists": []}
+    return {"playlists": [p.model_dump() for p in db.list_playlists(LIBRARY.id)]}
+
+
+@app.delete("/api/library/playlists/{playlist_id}")
+def remove_playlist(playlist_id: int) -> dict:
+    library_id = _require_library(None)
+    if not db.delete_playlist(library_id, playlist_id):
+        raise _error(404, "NO_PLAYLIST", f"No playlist with id {playlist_id}.")
+    return {"playlists": [p.model_dump() for p in db.list_playlists(library_id)]}
+
+
 # --- folder scanning -------------------------------------------------------
 
 @app.post("/api/scan", status_code=202)
@@ -268,12 +342,16 @@ def match(request: MatchRequest) -> dict:
         )
     if not request.tracks:
         raise _error(400, "NO_TRACKS", "The playlist has no tracks.")
+    index = _get_index(request.playlist_id)
     results = match_playlist(
-        request.tracks, _get_index(), db.preference_map(LIBRARY.id)
+        request.tracks,
+        index,
+        db.preference_map(LIBRARY.id),
+        db.playlist_membership(LIBRARY.id),
     )
     return {
         "results": [result.model_dump() for result in results],
-        "library_size": len(LIBRARY.tracks),
+        "library_size": len(index.items),
         "library_name": LIBRARY.name,
     }
 

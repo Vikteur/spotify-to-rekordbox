@@ -22,11 +22,17 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
-from server.models import LibraryInfo, LibraryTrack, Preference, Source
+from server.models import (
+    LibraryInfo,
+    LibraryTrack,
+    PlaylistInfo,
+    Preference,
+    Source,
+)
 
 DB_PATH = Path(__file__).resolve().parent.parent / "data" / "library.db"
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS libraries (
@@ -81,6 +87,24 @@ CREATE TABLE IF NOT EXISTS settings (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
+-- Imported rekordbox playlists ("Most played 2026", ...). Membership is a
+-- ranking signal when several versions of a song could match, and can also
+-- be used to narrow matching to one playlist.
+CREATE TABLE IF NOT EXISTS playlists (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    library_id    INTEGER NOT NULL REFERENCES libraries(id) ON DELETE CASCADE,
+    name          TEXT NOT NULL,
+    added_at      TEXT NOT NULL,
+    missing_count INTEGER NOT NULL DEFAULT 0,
+    UNIQUE (library_id, name)
+);
+CREATE TABLE IF NOT EXISTS playlist_tracks (
+    playlist_id INTEGER NOT NULL REFERENCES playlists(id) ON DELETE CASCADE,
+    track_id    TEXT NOT NULL,
+    position    INTEGER NOT NULL,
+    PRIMARY KEY (playlist_id, track_id)
+);
+CREATE INDEX IF NOT EXISTS playlist_tracks_track ON playlist_tracks(track_id);
 """
 
 _COLUMNS = (
@@ -452,6 +476,93 @@ def clear_preferences(library_id: int) -> int:
         return conn.execute(
             "DELETE FROM preferences WHERE library_id = ?", (library_id,)
         ).rowcount
+
+
+# --- imported rekordbox playlists ------------------------------------------
+
+def replace_playlist(
+    library_id: int, name: str, track_ids: list[str], missing_count: int
+) -> int:
+    """Store (or replace) a playlist and its resolved tracks."""
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT id FROM playlists WHERE library_id = ? AND name = ?",
+            (library_id, name),
+        ).fetchone()
+        if row:
+            playlist_id = int(row["id"])
+            conn.execute(
+                "UPDATE playlists SET added_at = ?, missing_count = ? WHERE id = ?",
+                (datetime.now(timezone.utc).isoformat(), missing_count, playlist_id),
+            )
+            conn.execute(
+                "DELETE FROM playlist_tracks WHERE playlist_id = ?", (playlist_id,)
+            )
+        else:
+            playlist_id = int(
+                conn.execute(
+                    "INSERT INTO playlists (library_id, name, added_at, missing_count) "
+                    "VALUES (?, ?, ?, ?)",
+                    (
+                        library_id,
+                        name,
+                        datetime.now(timezone.utc).isoformat(),
+                        missing_count,
+                    ),
+                ).lastrowid
+            )
+        conn.executemany(
+            "INSERT OR IGNORE INTO playlist_tracks (playlist_id, track_id, position) "
+            "VALUES (?, ?, ?)",
+            [(playlist_id, track_id, i) for i, track_id in enumerate(track_ids)],
+        )
+        return playlist_id
+
+
+def list_playlists(library_id: int) -> list[PlaylistInfo]:
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT p.id, p.library_id, p.name, p.added_at, p.missing_count, "
+            "       COUNT(pt.track_id) AS track_count "
+            "FROM playlists p LEFT JOIN playlist_tracks pt ON pt.playlist_id = p.id "
+            "WHERE p.library_id = ? GROUP BY p.id ORDER BY p.name",
+            (library_id,),
+        ).fetchall()
+    return [PlaylistInfo(**dict(row)) for row in rows]
+
+
+def playlist_membership(library_id: int) -> dict[str, list[str]]:
+    """{track_id: [playlist name, ...]} for every track in any playlist."""
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT pt.track_id, p.name FROM playlist_tracks pt "
+            "JOIN playlists p ON p.id = pt.playlist_id "
+            "WHERE p.library_id = ? ORDER BY p.name",
+            (library_id,),
+        ).fetchall()
+    membership: dict[str, list[str]] = {}
+    for row in rows:
+        membership.setdefault(row["track_id"], []).append(row["name"])
+    return membership
+
+
+def playlist_track_ids(playlist_id: int) -> set[str]:
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT track_id FROM playlist_tracks WHERE playlist_id = ? "
+            "ORDER BY position",
+            (playlist_id,),
+        ).fetchall()
+    return {row["track_id"] for row in rows}
+
+
+def delete_playlist(library_id: int, playlist_id: int) -> bool:
+    with connect() as conn:
+        cursor = conn.execute(
+            "DELETE FROM playlists WHERE id = ? AND library_id = ?",
+            (playlist_id, library_id),
+        )
+        return cursor.rowcount > 0
 
 
 def _table_exists(conn: sqlite3.Connection, table: str) -> bool:

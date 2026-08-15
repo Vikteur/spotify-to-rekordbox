@@ -39,6 +39,17 @@ class Source(BaseModel):
     track_count: int
 
 
+class PlaylistInfo(BaseModel):
+    """An imported rekordbox playlist, e.g. "Most played 2026"."""
+
+    id: int
+    library_id: int
+    name: str
+    added_at: str
+    track_count: int      # entries resolved to files in this library
+    missing_count: int    # entries that matched nothing
+
+
 class LibraryInfo(BaseModel):
     """One named music collection — typically one device."""
 
@@ -55,6 +66,7 @@ class ScoredCandidate(BaseModel):
     parts: dict[str, float | None]   # facet breakdown: title/artist/combined/version/duration
     version: VersionOut              # extracted from the candidate's title
     duration_delta_sec: float | None # candidate minus query, when both known
+    playlists: list[str] = []        # imported rekordbox playlists holding this file
 
 
 class MatchResult(BaseModel):

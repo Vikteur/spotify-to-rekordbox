@@ -66,7 +66,17 @@ Each library is built from one or more sources — a scanned folder, an imported
 - it's near-instant, no matter how big the collection is
 - rekordbox sometimes stores the version in a separate `Mix` field; that gets folded back into the title so the remix picker still works
 
-Each loaded source is listed with its track count and can be removed independently. A file that appears in several sources is stored once but claimed by each, so removing one source only drops the tracks nothing else claims — and a folder rescan never blanks the BPM and key that came from rekordbox, since a scan can't observe those.
+Each loaded source is listed with its track count and can be removed independently.
+
+## Most-played playlists
+
+Upload rekordbox playlists — "Most played 2026", "Last month", "All time" — per library, and the app uses them to work out which version of a song you actually play. In rekordbox: right-click the playlist › Export. Any of **m3u8, m3u, pls, txt or xml** works; m3u8 is the most reliable because it carries file paths, while the TXT export has none and is resolved by artist and title instead (at a stricter threshold, since a wrong resolution here would quietly promote the wrong version later). Re-uploading a playlist of the same name replaces it.
+
+They do two things:
+
+**Ranking, always.** A file that's in one of your playlists is offered first and marked `★` in the picker, and being in several ranks higher still. This is deliberately a nudge, not a veto: it settles a close call between two versions but never outweighs a version or artist mismatch, so playing the radio edit constantly won't make it stand in for the original a playlist asked for. Where two candidates would otherwise be too close to call, membership is enough to settle it into an automatic pick.
+
+**Filtering, on demand.** The dropdown next to *Match against library* can narrow matching to a single playlist — "which of this Spotify playlist do I have in my 2026 most-played" — with everything outside it reported as not found. A file that appears in several sources is stored once but claimed by each, so removing one source only drops the tracks nothing else claims — and a folder rescan never blanks the BPM and key that came from rekordbox, since a scan can't observe those.
 
 ## Usage notes
 
@@ -112,7 +122,7 @@ python scripts/probe_spotify.py "https://open.spotify.com/playlist/<id>"
 ## Development
 
 ```bash
-.venv/bin/pytest           # 180 tests: parsers, scanner, database, libraries, matcher calibration, preferences, exports, API
+.venv/bin/pytest           # 207 tests: parsers, scanner, database, libraries, playlists, matcher calibration, preferences, exports, API
 npm run typecheck          # strict TS on the client
 node scripts/screenshot.mjs <music-folder>   # regenerate docs/screenshot.png (app must be running)
 ```

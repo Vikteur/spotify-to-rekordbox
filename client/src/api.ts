@@ -2,6 +2,8 @@ import type {
   LibrarySummary,
   MatchResult,
   Playlist,
+  PlaylistImportResult,
+  PlaylistInfo,
   PlaylistTrack,
   Preference,
   ScanStatus,
@@ -81,10 +83,26 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ url }),
     }),
-  match: (tracks: PlaylistTrack[]) =>
-    request<{ results: MatchResult[]; library_size: number }>('/api/match', {
-      method: 'POST',
-      body: JSON.stringify({ tracks }),
+  match: (tracks: PlaylistTrack[], playlistId: number | null) =>
+    request<{ results: MatchResult[]; library_size: number; library_name: string }>(
+      '/api/match',
+      { method: 'POST', body: JSON.stringify({ tracks, playlist_id: playlistId }) },
+    ),
+  playlists: () => request<{ playlists: PlaylistInfo[] }>('/api/library/playlists'),
+  importPlaylist: async (file: File): Promise<PlaylistImportResult> => {
+    const response = await fetch(
+      `/api/library/playlists?name=${encodeURIComponent(file.name)}`,
+      { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: file },
+    );
+    if (!response.ok) {
+      const detail = (await response.json()).detail;
+      throw new ApiError(response.status, detail?.code ?? 'UNKNOWN', detail?.message ?? 'Import failed');
+    }
+    return response.json() as Promise<PlaylistImportResult>;
+  },
+  removePlaylist: (id: number) =>
+    request<{ playlists: PlaylistInfo[] }>(`/api/library/playlists/${id}`, {
+      method: 'DELETE',
     }),
   preferences: () => request<{ preferences: Preference[] }>('/api/preferences'),
   rememberChoice: (artist: string, title: string, trackId: string) =>

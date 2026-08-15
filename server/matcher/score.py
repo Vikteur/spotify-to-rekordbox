@@ -25,6 +25,12 @@ WEIGHT_COMBINED = 0.70    # replaces title+artist for filename-only candidates
 WEIGHT_VERSION = 0.15
 WEIGHT_DURATION = 0.15
 
+# Being in an imported rekordbox playlist ("Most played 2026") nudges a
+# candidate up. Deliberately small: it should settle a close call between
+# versions, never outweigh a version or artist mismatch, which cost 0.2+.
+PLAYLIST_BONUS = 0.02
+PLAYLIST_BONUS_CAP = 3    # in more of your lists = played more = slightly higher
+
 # Version classes: how bad is offering this when the query asked "original"?
 _LIGHT = {"extended", "radio", "edit", "club", "mix", "version"}          # 0.60
 _REMIXER_SAME_MIN = 0.85

@@ -98,6 +98,25 @@ export interface ScoredCandidate {
   parts: Record<string, number | null>;
   version: VersionInfo;
   duration_delta_sec: number | null;
+  playlists: string[];
+}
+
+export interface PlaylistInfo {
+  id: number;
+  library_id: number;
+  name: string;
+  added_at: string;
+  track_count: number;
+  missing_count: number;
+}
+
+export interface PlaylistImportResult {
+  playlist_id: number;
+  name: string;
+  resolved: number;
+  missing: number;
+  missing_examples: string[];
+  playlists: PlaylistInfo[];
 }
 
 export interface MatchResult {

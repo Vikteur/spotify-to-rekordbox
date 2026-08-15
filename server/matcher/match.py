@@ -6,6 +6,8 @@ from server.matcher.score import (
     AUTO_MIN_VERSION,
     AUTO_SCORE,
     MAX_CANDIDATES,
+    PLAYLIST_BONUS,
+    PLAYLIST_BONUS_CAP,
     REPORT_THRESHOLD,
     STRONG_THRESHOLD,
     WEIGHT_ARTIST,
@@ -79,8 +81,13 @@ def _bucket(scored: list[ScoredCandidate]) -> tuple[str, str | None]:
         return "unmatched", None
     best = scored[0]
     if best.score >= AUTO_SCORE:
+        # Too close to call on score alone is still decided when exactly one
+        # of the contenders is a track you actually play. Order matters: the
+        # single-candidate case must short-circuit before scored[1] is read.
         margin_ok = (
-            len(scored) == 1 or best.score - scored[1].score >= AUTO_MARGIN
+            len(scored) == 1
+            or best.score - scored[1].score >= AUTO_MARGIN
+            or (bool(best.playlists) and not scored[1].playlists)
         )
         version_part = best.parts.get("version") or 0.0
         duration_part = best.parts.get("duration")
@@ -96,10 +103,18 @@ def _bucket(scored: list[ScoredCandidate]) -> tuple[str, str | None]:
     return "unmatched", None
 
 
+def _ranked(candidate: ScoredCandidate) -> float:
+    """Score with the playlist nudge applied — used for ordering only."""
+    return candidate.score + PLAYLIST_BONUS * min(
+        len(candidate.playlists), PLAYLIST_BONUS_CAP
+    )
+
+
 def match_one(
     track: PlaylistTrackInput,
     index: LibraryIndex,
     preferences: dict[str, str] | None = None,
+    membership: dict[str, list[str]] | None = None,
 ) -> MatchResult:
     parts = extract_version(track.title)
     core_norm = normalize(parts.core_title)
@@ -116,7 +131,10 @@ def match_one(
         for candidate in candidates
     ]
     scored = [c for c in scored if c.score >= REPORT_THRESHOLD]
-    scored.sort(key=lambda c: c.score, reverse=True)
+    if membership:
+        for candidate in scored:
+            candidate.playlists = membership.get(candidate.track.id, [])
+    scored.sort(key=_ranked, reverse=True)
     scored = scored[:MAX_CANDIDATES]
 
     bucket, auto_id = _bucket(scored)
@@ -153,5 +171,6 @@ def match_playlist(
     tracks: list[PlaylistTrackInput],
     index: LibraryIndex,
     preferences: dict[str, str] | None = None,
+    membership: dict[str, list[str]] | None = None,
 ) -> list[MatchResult]:
-    return [match_one(track, index, preferences) for track in tracks]
+    return [match_one(track, index, preferences, membership) for track in tracks]

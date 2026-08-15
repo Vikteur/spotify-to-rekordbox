@@ -4,6 +4,7 @@ import type {
   LibrarySummary,
   MatchResult,
   Playlist,
+  PlaylistInfo,
   Preference,
   ScanStatus,
   ScoredCandidate,
@@ -37,6 +38,7 @@ function candidateLabel(candidate: ScoredCandidate): string {
     track.musical_key ?? '',
   ].filter(Boolean).join(' · ');
   const bits = [
+    candidate.playlists.length ? `★ ${candidate.playlists.join(', ')}` : '',
     `${track.filename}.${track.ext}`,
     version,
     `${formatDuration(track.duration_sec)}${formatDelta(candidate.duration_delta_sec)}`,
@@ -65,6 +67,9 @@ export default function App() {
   const [libNote, setLibNote] = useState('');
   const [importing, setImporting] = useState(false);
   const [newLibName, setNewLibName] = useState('');
+  const [playlists, setPlaylists] = useState<PlaylistInfo[]>([]);
+  const [filterId, setFilterId] = useState<number | null>(null);
+  const plInput = useRef<HTMLInputElement | null>(null);
   const xmlInput = useRef<HTMLInputElement | null>(null);
   const polling = useRef<number | null>(null);
 
@@ -93,6 +98,7 @@ export default function App() {
     api.library().then(setLib).catch(() => undefined);
     api.scanStatus().then(setScan).catch(() => undefined);
     api.preferences().then((r) => setPrefs(r.preferences)).catch(() => undefined);
+    api.playlists().then((r) => setPlaylists(r.playlists)).catch(() => undefined);
     return () => {
       if (polling.current) window.clearInterval(polling.current);
     };
@@ -130,8 +136,13 @@ export default function App() {
       const summary = await action();
       setLib(summary);
       setScan(null);
-      const { preferences } = await api.preferences();
+      setFilterId(null);
+      const [{ preferences }, { playlists: lists }] = await Promise.all([
+        api.preferences(),
+        api.playlists(),
+      ]);
       setPrefs(preferences);
+      setPlaylists(lists);
       setRemembered({});
     } catch (error) {
       setScanError(error instanceof ApiError ? error.message : String(error));
@@ -196,6 +207,38 @@ export default function App() {
     }
   }
 
+  async function importPlaylist(file: File) {
+    setScanError('');
+    setLibNote('');
+    libraryChanged();
+    try {
+      const result = await api.importPlaylist(file);
+      setPlaylists(result.playlists);
+      const missing = result.missing
+        ? ` ${result.missing} of its tracks aren't in this library${
+            result.missing_examples.length ? ` (e.g. ${result.missing_examples[0]})` : ''
+          }.`
+        : '';
+      setLibNote(`Imported “${result.name}” — ${result.resolved} tracks matched.${missing}`);
+    } catch (error) {
+      setScanError(error instanceof ApiError ? error.message : String(error));
+    } finally {
+      if (plInput.current) plInput.current.value = '';
+    }
+  }
+
+  async function removePlaylist(id: number) {
+    setScanError('');
+    libraryChanged();
+    try {
+      const { playlists: remaining } = await api.removePlaylist(id);
+      setPlaylists(remaining);
+      if (filterId === id) setFilterId(null);
+    } catch (error) {
+      setScanError(error instanceof ApiError ? error.message : String(error));
+    }
+  }
+
   async function removeSource(id: number) {
     setScanError('');
     setLibNote('');
@@ -247,7 +290,7 @@ export default function App() {
     setMatching(true);
     setMatchError('');
     try {
-      const { results: matched } = await api.match(playlist.tracks);
+      const { results: matched } = await api.match(playlist.tracks, filterId);
       setResults(matched);
       const preset: Record<number, string> = {};
       for (const result of matched) {
@@ -485,6 +528,52 @@ export default function App() {
           </span>
         </div>
 
+        {activeId !== null && (
+          <div className="mt-3">
+            <div className="flex flex-wrap items-center gap-2 text-gray-600">
+              <span>Most-played playlists:</span>
+              <input
+                ref={plInput}
+                type="file"
+                accept=".m3u8,.m3u,.txt,.pls,.xml"
+                className="max-w-xs text-xs file:mr-2 file:rounded file:border file:border-gray-300 file:bg-white file:px-2 file:py-1"
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  if (file) importPlaylist(file);
+                }}
+              />
+              <span className="text-xs text-gray-400">
+                rekordbox › right-click a playlist › Export (m3u8, txt, pls or xml)
+              </span>
+            </div>
+            {playlists.length > 0 && (
+              <ul className="mt-2 rounded border border-gray-200">
+                {playlists.map((list) => (
+                  <li
+                    key={list.id}
+                    className="flex items-center gap-2 border-b border-gray-100 px-3 py-1.5 last:border-b-0"
+                  >
+                    <span aria-hidden>★</span>
+                    <span className="min-w-0 flex-1 truncate">{list.name}</span>
+                    <span className="shrink-0 text-gray-500">
+                      {list.track_count.toLocaleString()} tracks
+                      {list.missing_count > 0 && (
+                        <span className="text-amber-700"> · {list.missing_count} not here</span>
+                      )}
+                    </span>
+                    <button
+                      className="shrink-0 rounded border border-gray-300 px-2 py-0.5 text-xs hover:bg-gray-50"
+                      onClick={() => removePlaylist(list.id)}
+                    >
+                      Remove
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
+
         {prefs.length > 0 && (
           <details className="mt-3">
             <summary className="cursor-pointer text-gray-600">
@@ -595,14 +684,35 @@ export default function App() {
             {playlist.total ?? '100+'} tracks. Paste the full tracklist as text to match everything.
           </p>
         )}
-        <button
-          className="mt-3 rounded bg-gray-900 px-4 py-2 font-medium text-white disabled:opacity-40"
-          disabled={!playlist || !hasLibrary || matching}
-          title={!hasLibrary ? 'Add a library first (scan a folder or import a rekordbox XML)' : undefined}
-          onClick={runMatch}
-        >
-          {matching ? 'Matching…' : 'Match against library'}
-        </button>
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <button
+            className="rounded bg-gray-900 px-4 py-2 font-medium text-white disabled:opacity-40"
+            disabled={!playlist || !hasLibrary || matching}
+            title={!hasLibrary ? 'Add a library first (scan a folder or import a rekordbox XML)' : undefined}
+            onClick={runMatch}
+          >
+            {matching ? 'Matching…' : 'Match against library'}
+          </button>
+          {playlists.length > 0 && (
+            <label className="flex items-center gap-2 text-gray-600">
+              limited to:
+              <select
+                className="rounded border border-gray-300 px-2 py-1.5"
+                value={filterId ?? ''}
+                onChange={(event) =>
+                  setFilterId(event.target.value ? Number(event.target.value) : null)
+                }
+              >
+                <option value="">everything in {lib?.active_library_name}</option>
+                {playlists.map((list) => (
+                  <option key={list.id} value={list.id}>
+                    ★ {list.name} ({list.track_count})
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+        </div>
         {matchError && <p className="mt-2 text-red-700">{matchError}</p>}
       </section>
 

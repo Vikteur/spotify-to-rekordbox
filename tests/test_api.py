@@ -265,6 +265,95 @@ def test_preference_endpoints_validate_and_forget(client: TestClient, library: P
     assert client.delete("/api/preferences").json()["preferences"] == []
 
 
+# --- imported rekordbox playlists ------------------------------------------
+
+def m3u8_of(*paths: Path) -> bytes:
+    """A playlist file the way rekordbox exports one, using real paths."""
+    lines = ["#EXTM3U"]
+    for path in paths:
+        lines.append(f"#EXTINF:-1,{path.stem}")
+        lines.append(str(path))
+    return ("\n".join(lines) + "\n").encode("utf-8")
+
+
+def test_import_playlist_and_use_it_for_ranking(client: TestClient, library: Path) -> None:
+    scan_and_wait(client, library)
+    data = m3u8_of(library / "House" / "substitution-ext.mp3")
+
+    response = client.post("/api/library/playlists?name=Most played 2026.m3u8", content=data)
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["name"] == "Most played 2026"
+    assert payload["resolved"] == 1
+    assert payload["missing"] == 0
+    assert payload["playlists"][0]["track_count"] == 1
+
+    result = client.post(
+        "/api/match",
+        json={"tracks": [{"index": 0, "artist": "Purple Disco Machine", "title": "Substitution"}]},
+    ).json()["results"][0]
+    top = result["candidates"][0]
+    assert top["track"]["filename"] == "substitution-ext"
+    assert top["playlists"] == ["Most played 2026"]
+
+
+def test_playlist_filter_narrows_matching(client: TestClient, library: Path) -> None:
+    scan_and_wait(client, library)
+    data = m3u8_of(library / "House" / "substitution-ext.mp3")
+    playlist_id = client.post(
+        "/api/library/playlists?name=Most played 2026.m3u8", content=data
+    ).json()["playlist_id"]
+
+    tracks = [
+        {"index": 0, "artist": "Purple Disco Machine", "title": "Substitution"},
+        {"index": 1, "artist": "Étienne de Crécy", "title": "Am I Wrong"},
+    ]
+    whole = client.post("/api/match", json={"tracks": tracks}).json()
+    assert whole["library_size"] == 6
+    assert whole["results"][1]["bucket"] == "auto"
+
+    narrowed = client.post(
+        "/api/match", json={"tracks": tracks, "playlist_id": playlist_id}
+    ).json()
+    assert narrowed["library_size"] == 1
+    assert narrowed["results"][0]["candidates"], "the playlist track still matches"
+    assert narrowed["results"][1]["bucket"] == "unmatched"  # outside the playlist
+
+
+def test_playlists_are_listed_and_removable(client: TestClient, library: Path) -> None:
+    scan_and_wait(client, library)
+    data = m3u8_of(library / "House" / "substitution-ext.mp3")
+    client.post("/api/library/playlists?name=All time.m3u8", content=data)
+
+    listed = client.get("/api/library/playlists").json()["playlists"]
+    assert [p["name"] for p in listed] == ["All time"]
+
+    assert client.delete(f"/api/library/playlists/{listed[0]['id']}").json()["playlists"] == []
+    assert client.delete(f"/api/library/playlists/{listed[0]['id']}").status_code == 404
+
+
+def test_playlists_are_scoped_to_their_library(client: TestClient, library: Path) -> None:
+    scan_and_wait(client, library)
+    client.post("/api/library/playlists?name=All time.m3u8",
+                content=m3u8_of(library / "House" / "substitution-ext.mp3"))
+    client.post("/api/libraries", json={"name": "Studio PC"})
+    assert client.get("/api/library/playlists").json()["playlists"] == []
+
+
+def test_playlist_import_rejects_unusable_input(client: TestClient, library: Path) -> None:
+    scan_and_wait(client, library)
+    bad = client.post("/api/library/playlists?name=x.m3u8", content=b"#EXTM3U\n")
+    assert bad.status_code == 400
+    assert bad.json()["detail"]["code"] == "BAD_PLAYLIST"
+
+    foreign = client.post(
+        "/api/library/playlists?name=other.m3u8",
+        content=b"#EXTM3U\n/some/other/device/track.mp3\n",
+    )
+    assert foreign.status_code == 400
+    assert foreign.json()["detail"]["code"] == "NOTHING_RESOLVED"
+
+
 def test_scan_missing_folder_404(client: TestClient, tmp_path: Path) -> None:
     response = client.post("/api/scan", json={"folder": str(tmp_path / "nope")})
     assert response.status_code == 404
