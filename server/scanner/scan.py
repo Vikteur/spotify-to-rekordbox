@@ -4,8 +4,9 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 
+from server import db
+from server.library import LIBRARY
 from server.models import LibraryTrack
-from server.scanner.cache import cached_track, load_cache, save_cache
 from server.scanner.tags import read_track
 from server.scanner.walk import walk_library
 
@@ -17,22 +18,19 @@ class ScanInProgress(Exception):
 
 
 class Scanner:
-    """Owns the one in-memory library and the (single) background scan."""
+    """Runs one folder scan at a time, writing results through to SQLite."""
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._thread: threading.Thread | None = None
-        self.tracks: list[LibraryTrack] = []
-        self.by_id: dict[str, LibraryTrack] = {}
-        self.generation = 0  # bumped per completed scan; lets the matcher cache its index
         self._status: dict = {"state": "idle"}
 
     def status(self) -> dict:
         with self._lock:
             return dict(self._status)
 
-    def has_library(self) -> bool:
-        return bool(self.tracks) and self.status()["state"] == "done"
+    def is_scanning(self) -> bool:
+        return self.status()["state"] == "scanning"
 
     def start_scan(self, folder: str, force: bool = False) -> None:
         with self._lock:
@@ -40,6 +38,7 @@ class Scanner:
                 raise ScanInProgress
             self._status = {
                 "state": "scanning",
+                "folder": folder,
                 "found": 0,
                 "parsed": 0,
                 "from_cache": 0,
@@ -64,27 +63,22 @@ class Scanner:
     def _run(self, folder: str, force: bool) -> None:
         started = time.monotonic()
         try:
-            root = Path(folder)
-            files, drm_count, walk_errors = walk_library(root)
+            files, drm_count, walk_errors = walk_library(Path(folder))
             errors = [{"file": "", "message": message} for message in walk_errors]
             self._set(found=len(files), skipped_drm=drm_count, errors=errors)
 
-            cache = {} if force else load_cache(folder)
+            source_id = db.upsert_source("folder", folder)
+            known = {} if force else db.source_tracks(source_id)
+
             tracks: list[LibraryTrack] = []
             to_parse: list[Path] = []
-            from_cache = 0
             for path in files:
-                entry = cache.get(str(path))
-                track = cached_track(entry) if entry else None
-                if (
-                    track is not None
-                    and entry is not None
-                    and self._entry_is_fresh(path, entry)
-                ):
-                    tracks.append(track)
-                    from_cache += 1
+                stored = known.get(str(path))
+                if stored is not None and _unchanged(path, stored):
+                    tracks.append(stored)
                 else:
                     to_parse.append(path)
+            from_cache = len(tracks)
             self._set(from_cache=from_cache)
 
             parsed = 0
@@ -98,39 +92,35 @@ class Scanner:
                         self._set(parsed=parsed, errors=errors)
             self._set(parsed=parsed, errors=errors)
 
-            tracks.sort(key=lambda t: t.path)
-            save_cache(folder, tracks)
+            tracks.sort(key=lambda track: track.path)
+            db.replace_source_tracks(source_id, tracks)
+            LIBRARY.reload()
 
-            by_ext: dict[str, int] = {}
-            for track in tracks:
-                by_ext[track.ext] = by_ext.get(track.ext, 0) + 1
-            summary = {
-                "folder": folder,
-                "track_count": len(tracks),
-                "by_ext": by_ext,
-                "from_cache": from_cache,
-                "skipped_drm": drm_count,
-                "scan_ms": round((time.monotonic() - started) * 1000),
-                "scanned_at": datetime.now(timezone.utc).isoformat(),
-            }
-            with self._lock:
-                self.tracks = tracks
-                self.by_id = {track.id: track for track in tracks}
-                self.generation += 1
-                self._status.update(state="done", library=summary)
-        except Exception as exc:  # a scan must never leave the app wedged
+            self._set(
+                state="done",
+                library=LIBRARY.summary(),
+                scanned={
+                    "folder": folder,
+                    "track_count": len(tracks),
+                    "from_cache": from_cache,
+                    "skipped_drm": drm_count,
+                    "scan_ms": round((time.monotonic() - started) * 1000),
+                    "scanned_at": datetime.now(timezone.utc).isoformat(),
+                },
+            )
+        except Exception as exc:  # a failed scan must never wedge the app
             self._set(state="error", message=str(exc))
 
-    @staticmethod
-    def _entry_is_fresh(path: Path, entry: dict) -> bool:
-        try:
-            stat = path.stat()
-        except OSError:
-            return False
-        return (
-            int(stat.st_mtime * 1000) == entry.get("mtime_ms")
-            and stat.st_size == entry.get("size_bytes")
-        )
+
+def _unchanged(path: Path, stored: LibraryTrack) -> bool:
+    try:
+        stat = path.stat()
+    except OSError:
+        return False
+    return (
+        int(stat.st_mtime * 1000) == stored.mtime_ms
+        and stat.st_size == stored.size_bytes
+    )
 
 
 SCANNER = Scanner()

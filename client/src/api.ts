@@ -1,4 +1,11 @@
-import type { MatchResult, Playlist, PlaylistTrack, ScanStatus } from './types';
+import type {
+  LibrarySummary,
+  MatchResult,
+  Playlist,
+  PlaylistTrack,
+  ScanStatus,
+  XmlImportResult,
+} from './types';
 
 export class ApiError extends Error {
   code: string;
@@ -32,6 +39,22 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  library: () => request<LibrarySummary>('/api/library'),
+  removeSource: (id: number) =>
+    request<LibrarySummary>(`/api/library/sources/${id}`, { method: 'DELETE' }),
+  importXml: async (file: File): Promise<XmlImportResult> => {
+    // Sent as a raw body rather than multipart — keeps the server dependency-free.
+    const response = await fetch(`/api/library/xml?name=${encodeURIComponent(file.name)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/xml' },
+      body: file,
+    });
+    if (!response.ok) {
+      const detail = (await response.json()).detail;
+      throw new ApiError(response.status, detail?.code ?? 'UNKNOWN', detail?.message ?? 'Import failed');
+    }
+    return response.json() as Promise<XmlImportResult>;
+  },
   scan: (folder: string, force: boolean) =>
     request<{ started: boolean }>('/api/scan', {
       method: 'POST',

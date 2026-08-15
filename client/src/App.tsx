@@ -1,6 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import { ApiError, api, downloadExport, parseTextPlaylist } from './api';
-import type { MatchResult, Playlist, ScanStatus, ScoredCandidate } from './types';
+import type {
+  LibrarySummary,
+  MatchResult,
+  Playlist,
+  ScanStatus,
+  ScoredCandidate,
+} from './types';
 
 const SKIP = '__skip__';
 
@@ -44,10 +50,14 @@ const chipStyles: Record<string, string> = {
 };
 
 export default function App() {
-  // --- Section 1: library scan ---
+  // --- Section 1: library (folder scans + rekordbox XML imports) ---
   const [folder, setFolder] = useState(() => localStorage.getItem('lastFolder') ?? '');
+  const [lib, setLib] = useState<LibrarySummary | null>(null);
   const [scan, setScan] = useState<ScanStatus | null>(null);
   const [scanError, setScanError] = useState('');
+  const [libNote, setLibNote] = useState('');
+  const [importing, setImporting] = useState(false);
+  const xmlInput = useRef<HTMLInputElement | null>(null);
   const polling = useRef<number | null>(null);
 
   // --- Section 2: playlist input ---
@@ -69,6 +79,8 @@ export default function App() {
   const [exportError, setExportError] = useState('');
 
   useEffect(() => {
+    // The library is restored from the database, so a reload needs no rescan.
+    api.library().then(setLib).catch(() => undefined);
     api.scanStatus().then(setScan).catch(() => undefined);
     return () => {
       if (polling.current) window.clearInterval(polling.current);
@@ -84,6 +96,7 @@ export default function App() {
           if (status.state !== 'scanning' && polling.current) {
             window.clearInterval(polling.current);
             polling.current = null;
+            if (status.library) setLib(status.library);
           }
         } catch {
           // transient poll failure: keep polling
@@ -92,14 +105,50 @@ export default function App() {
     }
   }, [scan]);
 
-  async function startScan(force: boolean) {
-    setScanError('');
+  function libraryChanged() {
     setResults(null);
     setSelections({});
+  }
+
+  async function startScan(force: boolean) {
+    setScanError('');
+    setLibNote('');
+    libraryChanged();
     try {
       localStorage.setItem('lastFolder', folder);
       await api.scan(folder, force);
       setScan({ state: 'scanning', found: 0, parsed: 0 });
+    } catch (error) {
+      setScanError(error instanceof ApiError ? error.message : String(error));
+    }
+  }
+
+  async function importXml(file: File) {
+    setImporting(true);
+    setScanError('');
+    setLibNote('');
+    libraryChanged();
+    try {
+      const result = await api.importXml(file);
+      setLib(result.library);
+      const missing = result.missing_files
+        ? ` ${result.missing_files} of them aren't on this machine right now (external drive not connected?) — they can still be matched, but rekordbox will need the drive to play them.`
+        : '';
+      setLibNote(`Imported ${result.imported.toLocaleString()} tracks from ${file.name}.${missing}`);
+    } catch (error) {
+      setScanError(error instanceof ApiError ? error.message : String(error));
+    } finally {
+      setImporting(false);
+      if (xmlInput.current) xmlInput.current.value = '';
+    }
+  }
+
+  async function removeSource(id: number) {
+    setScanError('');
+    setLibNote('');
+    libraryChanged();
+    try {
+      setLib(await api.removeSource(id));
     } catch (error) {
       setScanError(error instanceof ApiError ? error.message : String(error));
     }
@@ -193,20 +242,55 @@ export default function App() {
     }
   }
 
-  const library = scan?.state === 'done' ? scan.library : undefined;
+  const scanned = scan?.state === 'done' ? scan.scanned : undefined;
+  const hasLibrary = (lib?.track_count ?? 0) > 0;
 
   return (
     <main className="mx-auto max-w-5xl px-4 py-8 text-sm text-gray-900">
       <h1 className="text-2xl font-bold">Spotify → rekordbox</h1>
       <p className="mt-1 text-gray-500">
-        Scan your music folder, paste a public Spotify playlist, pick the right file per track, export a
+        Match a public Spotify playlist against the music you own, pick the right file per track, export a
         rekordbox playlist. Everything stays on your machine.
       </p>
 
       {/* 1 — Library */}
       <section className="mt-8">
-        <h2 className="text-lg font-semibold">1. Your music folder</h2>
-        <div className="mt-2 flex gap-2">
+        <h2 className="text-lg font-semibold">1. Your library</h2>
+
+        {hasLibrary ? (
+          <div className="mt-2 rounded border border-gray-200">
+            <p className="border-b border-gray-100 px-3 py-2 text-gray-700">
+              <span className="font-medium">{lib!.track_count.toLocaleString()} tracks</span> saved (
+              {Object.entries(lib!.by_ext).map(([ext, count]) => `${count} ${ext}`).join(', ')})
+              {' — kept in a local database, so no rescan on restart.'}
+            </p>
+            <ul>
+              {lib!.sources.map((source) => (
+                <li key={source.id} className="flex items-center gap-2 px-3 py-2 text-gray-700">
+                  <span title={source.kind === 'folder' ? 'scanned folder' : 'rekordbox XML export'}>
+                    {source.kind === 'folder' ? '📁' : '📄'}
+                  </span>
+                  <span className="min-w-0 flex-1 truncate" title={source.label}>{source.label}</span>
+                  <span className="shrink-0 text-gray-500">
+                    {source.track_count.toLocaleString()} tracks
+                  </span>
+                  <button
+                    className="shrink-0 rounded border border-gray-300 px-2 py-0.5 text-xs hover:bg-gray-50"
+                    onClick={() => removeSource(source.id)}
+                  >
+                    Remove
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : (
+          <p className="mt-2 text-gray-500">
+            Nothing loaded yet — scan a music folder, import a rekordbox XML export, or both.
+          </p>
+        )}
+
+        <div className="mt-3 flex gap-2">
           <input
             className="w-full rounded border border-gray-300 px-3 py-2"
             placeholder="e.g. /Users/viktor/Music/DJ or C:\Music (iTunes: ~/Music/Music/Media.localized)"
@@ -218,32 +302,52 @@ export default function App() {
             disabled={!folder.trim() || scan?.state === 'scanning'}
             onClick={() => startScan(false)}
           >
-            Scan
+            Scan folder
           </button>
           <button
             className="rounded border border-gray-300 px-3 py-2 disabled:opacity-40"
             disabled={!folder.trim() || scan?.state === 'scanning'}
             onClick={() => startScan(true)}
-            title="Ignore the cache and re-read every file"
+            title="Re-read every file instead of trusting the saved database"
           >
             Force rescan
           </button>
         </div>
+
+        <div className="mt-2 flex flex-wrap items-center gap-2 text-gray-600">
+          <span>or import a rekordbox collection:</span>
+          <input
+            ref={xmlInput}
+            type="file"
+            accept=".xml,text/xml,application/xml"
+            className="max-w-xs text-xs file:mr-2 file:rounded file:border file:border-gray-300 file:bg-white file:px-2 file:py-1"
+            disabled={importing}
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              if (file) importXml(file);
+            }}
+          />
+          {importing && <span>Importing…</span>}
+          <span className="text-xs text-gray-400">
+            rekordbox › File › Export Collection in xml format
+          </span>
+        </div>
+
         {scanError && <p className="mt-2 text-red-700">{scanError}</p>}
+        {libNote && <p className="mt-2 text-gray-700">{libNote}</p>}
         {scan?.state === 'scanning' && (
           <p className="mt-2 text-gray-600">
-            Scanning… found {scan.found ?? 0} files — parsed {scan.parsed ?? 0}, {scan.from_cache ?? 0} from cache
+            Scanning… found {scan.found ?? 0} files — parsed {scan.parsed ?? 0}, {scan.from_cache ?? 0} unchanged
           </p>
         )}
         {scan?.state === 'error' && <p className="mt-2 text-red-700">Scan failed: {scan.message}</p>}
-        {library && (
-          <p className="mt-2 text-gray-700">
-            <span className="font-medium">{library.track_count.toLocaleString()} tracks</span>
-            {' '}({Object.entries(library.by_ext).map(([ext, count]) => `${count} ${ext}`).join(', ')};{' '}
-            {library.from_cache} from cache, {(library.scan_ms / 1000).toFixed(1)}s)
-            {library.skipped_drm > 0 && (
+        {scanned && (
+          <p className="mt-2 text-gray-600">
+            Scanned {scanned.track_count.toLocaleString()} files in {(scanned.scan_ms / 1000).toFixed(1)}s
+            {scanned.from_cache > 0 && ` (${scanned.from_cache.toLocaleString()} unchanged since last scan)`}
+            {scanned.skipped_drm > 0 && (
               <span className="text-amber-700">
-                {' '}— {library.skipped_drm} DRM-protected iTunes file(s) skipped (rekordbox can't play .m4p)
+                {' '}— {scanned.skipped_drm} DRM-protected iTunes file(s) skipped (rekordbox can't play .m4p)
               </span>
             )}
             {scan?.errors && scan.errors.length > 0 && (
@@ -305,8 +409,8 @@ export default function App() {
         )}
         <button
           className="mt-3 rounded bg-gray-900 px-4 py-2 font-medium text-white disabled:opacity-40"
-          disabled={!playlist || !library || matching}
-          title={!library ? 'Scan your music folder first' : undefined}
+          disabled={!playlist || !hasLibrary || matching}
+          title={!hasLibrary ? 'Add a library first (scan a folder or import a rekordbox XML)' : undefined}
           onClick={runMatch}
         >
           {matching ? 'Matching…' : 'Match against library'}

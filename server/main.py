@@ -1,16 +1,20 @@
 import re
+from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from server import db
 from server.export.m3u8 import build_m3u8
 from server.export.rekordbox_xml import build_rekordbox_xml
+from server.library import LIBRARY
 from server.matcher.index import LibraryIndex
 from server.matcher.match import match_playlist
 from server.models import PlaylistTrackInput
+from server.rekordbox_import import RekordboxXmlError, parse_collection
 from server.scanner.scan import SCANNER, ScanInProgress
 from server.spotify.fetch import SpotifyFetchError, fetch_playlist
 from server.spotify.parse_embed import (
@@ -19,12 +23,22 @@ from server.spotify.parse_embed import (
     parse_playlist_url,
 )
 
-app = FastAPI(title="spotify-to-rekordbox")
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    # Restore the library from disk so a restart needs no rescan.
+    db.init()
+    LIBRARY.reload()
+    yield
+
+
+app = FastAPI(title="spotify-to-rekordbox", lifespan=lifespan)
 
 # Module-level so tests can swap in a fixture-backed fake.
 playlist_fetcher = fetch_playlist
 
 _PASTE_HINT = "Use the paste-text fallback: one 'Artist - Title' per line."
+MAX_XML_BYTES = 256 * 1024 * 1024
 
 
 class ScanRequest(BaseModel):
@@ -55,9 +69,9 @@ _index_cache: tuple[int, LibraryIndex] | None = None
 
 def _get_index() -> LibraryIndex:
     global _index_cache
-    generation = SCANNER.generation
+    generation = LIBRARY.generation
     if _index_cache is None or _index_cache[0] != generation:
-        _index_cache = (generation, LibraryIndex(SCANNER.tracks))
+        _index_cache = (generation, LibraryIndex(LIBRARY.tracks))
     return _index_cache[1]
 
 
@@ -65,6 +79,50 @@ def _get_index() -> LibraryIndex:
 def health() -> dict:
     return {"ok": True}
 
+
+# --- library sources -------------------------------------------------------
+
+@app.get("/api/library")
+def library() -> dict:
+    return LIBRARY.summary()
+
+
+@app.delete("/api/library/sources/{source_id}")
+def remove_source(source_id: int) -> dict:
+    if not db.delete_source(source_id):
+        raise _error(404, "NO_SOURCE", f"No library source with id {source_id}.")
+    LIBRARY.reload()
+    return LIBRARY.summary()
+
+
+@app.post("/api/library/xml")
+async def import_rekordbox_xml(request: Request, name: str = "rekordbox.xml") -> dict:
+    """Import a rekordbox collection XML export (raw request body, not multipart)."""
+    data = await request.body()
+    if not data:
+        raise _error(400, "EMPTY_FILE", "No XML content was uploaded.")
+    if len(data) > MAX_XML_BYTES:
+        raise _error(413, "FILE_TOO_LARGE", "That XML export is unexpectedly large.")
+    try:
+        tracks, warnings = parse_collection(data)
+    except RekordboxXmlError as exc:
+        raise _error(400, "BAD_XML", str(exc))
+
+    source_id = db.upsert_source("xml", name)
+    db.replace_source_tracks(source_id, tracks)
+    LIBRARY.reload()
+
+    # Exports routinely reference drives that aren't plugged in right now.
+    missing = sum(1 for track in tracks if not Path(track.path).exists())
+    return {
+        "imported": len(tracks),
+        "missing_files": missing,
+        "warnings": warnings[:20],
+        "library": LIBRARY.summary(),
+    }
+
+
+# --- folder scanning -------------------------------------------------------
 
 @app.post("/api/scan", status_code=202)
 def start_scan(request: ScanRequest) -> dict:
@@ -88,6 +146,8 @@ def scan_status() -> dict:
     return SCANNER.status()
 
 
+# --- playlist, matching, export --------------------------------------------
+
 @app.post("/api/spotify/playlist")
 def spotify_playlist(request: PlaylistRequest) -> dict:
     try:
@@ -104,17 +164,20 @@ def spotify_playlist(request: PlaylistRequest) -> dict:
 
 @app.post("/api/match")
 def match(request: MatchRequest) -> dict:
-    status = SCANNER.status()
-    if status["state"] == "scanning":
+    if SCANNER.is_scanning():
         raise _error(409, "SCAN_IN_PROGRESS", "Wait for the scan to finish.")
-    if not SCANNER.has_library():
-        raise _error(409, "NO_LIBRARY", "Scan a music folder first.")
+    if not LIBRARY.is_loaded():
+        raise _error(
+            409,
+            "NO_LIBRARY",
+            "Add a library first: scan a folder or import a rekordbox XML.",
+        )
     if not request.tracks:
         raise _error(400, "NO_TRACKS", "The playlist has no tracks.")
     results = match_playlist(request.tracks, _get_index())
     return {
         "results": [result.model_dump() for result in results],
-        "library_size": len(SCANNER.tracks),
+        "library_size": len(LIBRARY.tracks),
     }
 
 
@@ -125,11 +188,11 @@ def _safe_filename(name: str) -> str:
 
 @app.post("/api/export")
 def export(request: ExportRequest) -> Response:
-    if not SCANNER.has_library():
-        raise _error(409, "NO_LIBRARY", "Scan a music folder first.")
+    if not LIBRARY.is_loaded():
+        raise _error(409, "NO_LIBRARY", "Add a library first.")
     tracks = []
     for track_id in request.track_ids:
-        track = SCANNER.by_id.get(track_id)
+        track = LIBRARY.by_id.get(track_id)
         if track is None:
             raise _error(400, "UNKNOWN_TRACK", f"Unknown track id {track_id!r}.")
         tracks.append(track)

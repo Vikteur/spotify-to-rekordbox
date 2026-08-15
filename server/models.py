@@ -23,9 +23,20 @@ class LibraryTrack(BaseModel):
     album: str | None
     duration_sec: float | None
     bitrate_kbps: int | None
-    tag_source: str              # "tags" | "filename"
+    tag_source: str              # "tags" | "filename" | "rekordbox"
     size_bytes: int
     mtime_ms: int
+    bpm: float | None = None          # rekordbox XML only
+    musical_key: str | None = None    # rekordbox XML only (Tonality)
+    source_id: int | None = None
+
+
+class Source(BaseModel):
+    id: int
+    kind: str                    # "folder" | "xml"
+    label: str                   # folder path, or XML filename
+    added_at: str
+    track_count: int
 
 
 class ScoredCandidate(BaseModel):
