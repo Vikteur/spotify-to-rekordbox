@@ -126,7 +126,7 @@ python scripts/probe_spotify.py "https://open.spotify.com/playlist/<id>"
 ## Development
 
 ```bash
-.venv/bin/pytest           # 214 tests: parsers, scanner, database, libraries, playlists, matcher calibration, preferences, exports, API
+.venv/bin/pytest           # parsers, scanner, database, libraries, playlists, matcher calibration, preferences, exports, API
 npm run typecheck          # strict TS on the client
 node scripts/screenshot.mjs <music-folder>   # regenerate docs/screenshot.png (app must be running)
 ```

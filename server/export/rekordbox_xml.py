@@ -19,6 +19,18 @@ _KIND = {
 }
 
 
+def _kind(ext: str) -> str:
+    """rekordbox's display 'Kind' for a file extension.
+
+    Unmapped extensions fall back to a label derived from the extension itself
+    (e.g. 'ogg' → 'OGG File') rather than mislabelling everything as an MP3;
+    rekordbox re-analyses on import, so the exact string is cosmetic.
+    """
+    if ext in _KIND:
+        return _KIND[ext]
+    return f"{ext.upper()} File" if ext else "Unknown"
+
+
 def path_to_location(native_path: str) -> str:
     """'C:\\Música\\Té st.mp3' → 'file://localhost/C:/M%C3%BAsica/T%C3%A9%20st.mp3'.
 
@@ -53,7 +65,7 @@ def build_rekordbox_xml(playlist_name: str, tracks: list[LibraryTrack]) -> str:
             f'Name="{_attr(track.title)}"',
             f'Artist="{_attr(track.artist or "")}"',
             f'Album="{_attr(track.album or "")}"',
-            f'Kind="{_KIND.get(track.ext, "MP3 File")}"',
+            f'Kind="{_kind(track.ext)}"',
         ]
         if track.duration_sec:
             attrs.append(f'TotalTime="{round(track.duration_sec)}"')

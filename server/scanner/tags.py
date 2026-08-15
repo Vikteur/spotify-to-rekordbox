@@ -36,6 +36,12 @@ _KEY_TAGS = ("initialkey", "initialkey_txxx", "key")
 
 
 def track_id(path: str) -> str:
+    """A stable per-path id (48 bits of sha1(path)).
+
+    Not assumed globally unique: `path` carries its own UNIQUE constraint, so a
+    (astronomically unlikely) id collision between two distinct paths surfaces
+    as an IntegrityError on insert rather than silently overwriting a row.
+    """
     return hashlib.sha1(path.encode("utf-8")).hexdigest()[:12]
 
 

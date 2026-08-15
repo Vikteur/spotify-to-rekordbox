@@ -112,7 +112,14 @@ _index_cache: tuple[int, int | None, LibraryIndex] | None = None
 
 
 def _get_index(playlist_id: int | None = None) -> LibraryIndex:
-    """The matching index, optionally narrowed to one imported playlist."""
+    """The matching index, optionally narrowed to one imported playlist.
+
+    Single-writer assumption: this reads `LIBRARY` and mutates `_index_cache`
+    without a lock. It is safe because this is a single-user local app and
+    `/api/match` is refused while a scan is running, so no writer touches
+    `LIBRARY.generation`/`LIBRARY.tracks` concurrently. If real concurrency is
+    ever expected, guard this cache and snapshot `LIBRARY` under `LIBRARY._lock`.
+    """
     global _index_cache
     generation = LIBRARY.generation
     if (
