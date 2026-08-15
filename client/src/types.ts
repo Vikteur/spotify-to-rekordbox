@@ -94,4 +94,14 @@ export interface MatchResult {
   bucket: 'auto' | 'ambiguous' | 'unmatched';
   candidates: ScoredCandidate[];
   auto_selected_id: string | null;
+  from_preference: boolean;
+}
+
+export interface Preference {
+  id: string;
+  artist: string;
+  title: string;
+  track_id: string;
+  chosen_at: string;
+  file_label: string | null;
 }

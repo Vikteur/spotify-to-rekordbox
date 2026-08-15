@@ -18,11 +18,11 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
-from server.models import LibraryTrack, Source
+from server.models import LibraryTrack, Preference, Source
 
 DB_PATH = Path(__file__).resolve().parent.parent / "data" / "library.db"
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS sources (
@@ -54,6 +54,18 @@ CREATE TABLE IF NOT EXISTS track_sources (
     PRIMARY KEY (track_id, source_id)
 );
 CREATE INDEX IF NOT EXISTS track_sources_source ON track_sources(source_id);
+-- Remembered version choices: which of your files a given Spotify song means.
+-- Deliberately not foreign-keyed to tracks: removing a source (or unplugging a
+-- drive) must not erase a decision you made, since track ids are derived from
+-- the file path and come back unchanged when the file does.
+CREATE TABLE IF NOT EXISTS preferences (
+    id        TEXT PRIMARY KEY,     -- signature_id of the Spotify song
+    signature TEXT NOT NULL,
+    artist    TEXT NOT NULL,
+    title     TEXT NOT NULL,
+    track_id  TEXT NOT NULL,
+    chosen_at TEXT NOT NULL
+);
 """
 
 _COLUMNS = (
@@ -181,6 +193,69 @@ def delete_source(source_id: int) -> bool:
             return False
         conn.execute(_DELETE_ORPHANS)  # cascade cleared track_sources already
         return True
+
+
+def save_preference(
+    preference_id: str, signature: str, artist: str, title: str, track_id: str
+) -> None:
+    """Remember (or update) which file this Spotify song should resolve to."""
+    with connect() as conn:
+        conn.execute(
+            "INSERT INTO preferences (id, signature, artist, title, track_id, chosen_at) "
+            "VALUES (?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(id) DO UPDATE SET track_id = excluded.track_id, "
+            "    artist = excluded.artist, title = excluded.title, "
+            "    chosen_at = excluded.chosen_at",
+            (
+                preference_id,
+                signature,
+                artist,
+                title,
+                track_id,
+                datetime.now(timezone.utc).isoformat(),
+            ),
+        )
+
+
+def preference_map() -> dict[str, str]:
+    """{signature_id: track_id} — what matching applies."""
+    with connect() as conn:
+        rows = conn.execute("SELECT id, track_id FROM preferences").fetchall()
+    return {row["id"]: row["track_id"] for row in rows}
+
+
+def list_preferences() -> list[Preference]:
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT p.id, p.artist, p.title, p.track_id, p.chosen_at, "
+            "       t.filename, t.ext "
+            "FROM preferences p LEFT JOIN tracks t ON t.id = p.track_id "
+            "ORDER BY p.artist, p.title"
+        ).fetchall()
+    return [
+        Preference(
+            id=row["id"],
+            artist=row["artist"],
+            title=row["title"],
+            track_id=row["track_id"],
+            chosen_at=row["chosen_at"],
+            file_label=(
+                f"{row['filename']}.{row['ext']}" if row["filename"] else None
+            ),
+        )
+        for row in rows
+    ]
+
+
+def delete_preference(preference_id: str) -> bool:
+    with connect() as conn:
+        cursor = conn.execute("DELETE FROM preferences WHERE id = ?", (preference_id,))
+        return cursor.rowcount > 0
+
+
+def clear_preferences() -> int:
+    with connect() as conn:
+        return conn.execute("DELETE FROM preferences").rowcount
 
 
 def _has_column(conn: sqlite3.Connection, table: str, column: str) -> bool:

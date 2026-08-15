@@ -49,6 +49,7 @@ class LibraryIndex:
             for token in item.tokens:
                 self.postings.setdefault(token, []).append(ordinal)
         self._all_norms = [item.all_norm for item in self.items]
+        self.by_track_id = {item.track.id: item for item in self.items}
 
     def candidates(self, query_tokens: set[str], query_norm: str) -> list[IndexedTrack]:
         hits: dict[int, int] = {}

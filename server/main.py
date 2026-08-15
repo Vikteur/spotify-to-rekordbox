@@ -14,6 +14,7 @@ from server.export.rekordbox_xml import build_rekordbox_xml
 from server.library import LIBRARY
 from server.matcher.index import LibraryIndex
 from server.matcher.match import match_playlist
+from server.matcher.signature import signature_id, signature_of
 from server.models import PlaylistTrackInput
 from server.rekordbox_import import RekordboxXmlError, parse_collection
 from server.scanner.scan import SCANNER, ScanInProgress
@@ -59,6 +60,12 @@ class ExportRequest(BaseModel):
     name: str
     format: str  # "m3u8" | "xml"
     track_ids: list[str]
+
+
+class PreferenceRequest(BaseModel):
+    artist: str = ""
+    title: str
+    track_id: str
 
 
 def _error(status: int, code: str, message: str) -> HTTPException:
@@ -193,11 +200,46 @@ def match(request: MatchRequest) -> dict:
         )
     if not request.tracks:
         raise _error(400, "NO_TRACKS", "The playlist has no tracks.")
-    results = match_playlist(request.tracks, _get_index())
+    results = match_playlist(request.tracks, _get_index(), db.preference_map())
     return {
         "results": [result.model_dump() for result in results],
         "library_size": len(LIBRARY.tracks),
     }
+
+
+# --- remembered version choices --------------------------------------------
+
+@app.get("/api/preferences")
+def get_preferences() -> dict:
+    return {"preferences": [p.model_dump() for p in db.list_preferences()]}
+
+
+@app.post("/api/preferences")
+def save_preference(request: PreferenceRequest) -> dict:
+    """Remember this file as the default for this song from now on."""
+    if request.track_id not in LIBRARY.by_id:
+        raise _error(400, "UNKNOWN_TRACK", f"Unknown track id {request.track_id!r}.")
+    db.save_preference(
+        signature_id(request.artist, request.title),
+        signature_of(request.artist, request.title),
+        request.artist,
+        request.title,
+        request.track_id,
+    )
+    return {"preferences": [p.model_dump() for p in db.list_preferences()]}
+
+
+@app.delete("/api/preferences/{preference_id}")
+def forget_preference(preference_id: str) -> dict:
+    if not db.delete_preference(preference_id):
+        raise _error(404, "NO_PREFERENCE", "No remembered choice with that id.")
+    return {"preferences": [p.model_dump() for p in db.list_preferences()]}
+
+
+@app.delete("/api/preferences")
+def forget_all_preferences() -> dict:
+    db.clear_preferences()
+    return {"preferences": []}
 
 
 def _safe_filename(name: str) -> str:

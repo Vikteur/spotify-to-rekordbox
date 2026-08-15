@@ -19,6 +19,7 @@ from server.matcher.score import (
     duration_score,
     version_score,
 )
+from server.matcher.signature import signature_id
 from server.matcher.versions import TitleParts, extract_version
 from server.models import MatchResult, PlaylistTrackInput, ScoredCandidate, VersionOut
 
@@ -95,7 +96,11 @@ def _bucket(scored: list[ScoredCandidate]) -> tuple[str, str | None]:
     return "unmatched", None
 
 
-def match_one(track: PlaylistTrackInput, index: LibraryIndex) -> MatchResult:
+def match_one(
+    track: PlaylistTrackInput,
+    index: LibraryIndex,
+    preferences: dict[str, str] | None = None,
+) -> MatchResult:
     parts = extract_version(track.title)
     core_norm = normalize(parts.core_title)
     artist_bits = [track.artist] + list(parts.featured)
@@ -115,16 +120,38 @@ def match_one(track: PlaylistTrackInput, index: LibraryIndex) -> MatchResult:
     scored = scored[:MAX_CANDIDATES]
 
     bucket, auto_id = _bucket(scored)
+
+    # A version you picked before wins over whatever scoring would have chosen.
+    from_preference = False
+    preferred_id = (preferences or {}).get(signature_id(track.artist, track.title))
+    if preferred_id is not None:
+        preferred = next((c for c in scored if c.track.id == preferred_id), None)
+        if preferred is None and preferred_id in index.by_track_id:
+            # Still honour the choice even if this playlist's wording scored it
+            # too low to list; the song is the same one you decided about.
+            preferred = _score_candidate(
+                parts, core_norm, artist_norm, all_norm, track.duration_sec,
+                index.by_track_id[preferred_id],
+            )
+            scored = [preferred, *scored][:MAX_CANDIDATES]
+        if preferred is not None:
+            scored = [preferred, *[c for c in scored if c.track.id != preferred_id]]
+            auto_id = preferred_id
+            from_preference = True
+
     return MatchResult(
         input=track,
         input_version=_version_out(parts),
         bucket=bucket,
         candidates=scored,
         auto_selected_id=auto_id,
+        from_preference=from_preference,
     )
 
 
 def match_playlist(
-    tracks: list[PlaylistTrackInput], index: LibraryIndex
+    tracks: list[PlaylistTrackInput],
+    index: LibraryIndex,
+    preferences: dict[str, str] | None = None,
 ) -> list[MatchResult]:
-    return [match_one(track, index) for track in tracks]
+    return [match_one(track, index, preferences) for track in tracks]

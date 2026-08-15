@@ -4,7 +4,7 @@ A small local webapp that turns a **public Spotify playlist** into a **rekordbox
 
 1. Load your library — **scan a music folder**, **import a rekordbox XML export**, or both
 2. Paste a Spotify playlist link (no Spotify account or API key needed)
-3. It fuzzy-matches each Spotify track against your library; when several versions exist (original + remixes), **you pick one from a dropdown**
+3. It fuzzy-matches each Spotify track against your library; when several versions exist (original + remixes), **you pick one from a dropdown** — and it **remembers that pick** as the song's default for every future playlist
 4. Download a `.m3u8` or rekordbox `.xml` playlist and import it into rekordbox
 
 Your library is kept in a local SQLite file, so you scan once — not on every launch.
@@ -68,6 +68,9 @@ Each loaded source is listed with its track count and can be removed independent
 - **iTunes / Apple Music**: iTunes songs are `.m4a` files and fully supported (AAC and Apple Lossless). Typical folders: macOS `~/Music/Music/Media.localized/` (older: `~/Music/iTunes/iTunes Media/Music/`), Windows `C:\Users\<you>\Music\iTunes\iTunes Media\Music\`. **`.m4p` files** (pre-2010 iTunes purchases and Apple Music *subscription* downloads) are DRM-locked — rekordbox can't play them, so the scanner counts and reports them instead of matching them.
 - **Playlists over ~100 tracks**: Spotify's public embed data stops around 100 tracks. The app warns you when this happens — paste the full tracklist as text instead (in Spotify select all tracks, or use any text list with one `Artist - Title` per line).
 - **Matching**: green *auto* rows are confident matches (still overridable); amber *pick one* rows have several plausible files — that's the remix picker; *no match* rows list weak guesses if any. The dropdown shows each candidate's version (`[x remix]`, `[extended]`…), duration difference vs Spotify, format/bitrate, and score.
+- **Remembered versions**: when you pick a version for a song, that file becomes the song's default in every future playlist — those rows come back pre-selected with a purple *remembered* chip. The dropdown still lists the alternatives, and choosing a different one overwrites the default. Section 1 lists everything you've taught it, with **Forget** per entry and **Forget all**.
+
+  The choice is keyed on artist + core title + version, so it survives whichever way you load the playlist (Spotify link or pasted text), and different versions stay independent: teaching it your favourite *Strobe* says nothing about *Strobe (Radio Edit)*. Featured artists are ignored in that key, because playlists list them inconsistently. Choices also survive removing a library source — if the file comes back, so does the preference.
 
 ## Importing into rekordbox
 
@@ -103,7 +106,7 @@ python scripts/probe_spotify.py "https://open.spotify.com/playlist/<id>"
 ## Development
 
 ```bash
-.venv/bin/pytest           # 139 tests: parsers, scanner, database, matcher calibration, exports, API
+.venv/bin/pytest           # 156 tests: parsers, scanner, database, matcher calibration, preferences, exports, API
 npm run typecheck          # strict TS on the client
 node scripts/screenshot.mjs <music-folder>   # regenerate docs/screenshot.png (app must be running)
 ```

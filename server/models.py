@@ -52,3 +52,13 @@ class MatchResult(BaseModel):
     bucket: str                      # "auto" | "ambiguous" | "unmatched"
     candidates: list[ScoredCandidate]
     auto_selected_id: str | None
+    from_preference: bool = False    # the selection is a remembered choice
+
+
+class Preference(BaseModel):
+    id: str                          # signature_id, addresses this preference
+    artist: str
+    title: str
+    track_id: str
+    chosen_at: str
+    file_label: str | None           # None once the file leaves the library

@@ -3,6 +3,7 @@ import type {
   MatchResult,
   Playlist,
   PlaylistTrack,
+  Preference,
   ScanStatus,
   XmlImportResult,
 } from './types';
@@ -71,6 +72,16 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ tracks }),
     }),
+  preferences: () => request<{ preferences: Preference[] }>('/api/preferences'),
+  rememberChoice: (artist: string, title: string, trackId: string) =>
+    request<{ preferences: Preference[] }>('/api/preferences', {
+      method: 'POST',
+      body: JSON.stringify({ artist, title, track_id: trackId }),
+    }),
+  forgetChoice: (id: string) =>
+    request<{ preferences: Preference[] }>(`/api/preferences/${id}`, { method: 'DELETE' }),
+  forgetAllChoices: () =>
+    request<{ preferences: Preference[] }>('/api/preferences', { method: 'DELETE' }),
 };
 
 export async function downloadExport(

@@ -175,6 +175,85 @@ def test_import_rejects_bad_xml(client: TestClient) -> None:
     assert client.post("/api/library/xml", content=b"").status_code == 400
 
 
+def test_remembered_version_applies_to_the_next_playlist(
+    client: TestClient, library: Path
+) -> None:
+    scan_and_wait(client, library)
+    spotify_track = {"index": 0, "artist": "Purple Disco Machine", "title": "Substitution"}
+
+    first = client.post("/api/match", json={"tracks": [spotify_track]}).json()["results"][0]
+    assert first["from_preference"] is False
+    chosen = first["candidates"][0]["track"]["id"]
+
+    # Picking a version in the UI posts it as the default for this song.
+    response = client.post(
+        "/api/preferences",
+        json={"artist": "Purple Disco Machine", "title": "Substitution", "track_id": chosen},
+    )
+    assert response.status_code == 200
+    assert len(response.json()["preferences"]) == 1
+
+    # A later playlist containing the same song comes back pre-selected.
+    again = client.post("/api/match", json={"tracks": [spotify_track]}).json()["results"][0]
+    assert again["from_preference"] is True
+    assert again["auto_selected_id"] == chosen
+    assert again["candidates"][0]["track"]["id"] == chosen
+    # Other versions are still offered, so the choice can be changed.
+    assert len(again["candidates"]) >= 1
+
+
+def test_preference_survives_a_restart(client: TestClient, library: Path) -> None:
+    scan_and_wait(client, library)
+    matched = client.post(
+        "/api/match",
+        json={"tracks": [{"index": 0, "artist": "Étienne de Crécy", "title": "Am I Wrong"}]},
+    ).json()["results"][0]
+    client.post(
+        "/api/preferences",
+        json={
+            "artist": "Étienne de Crécy",
+            "title": "Am I Wrong",
+            "track_id": matched["auto_selected_id"],
+        },
+    )
+
+    with TestClient(main.app) as restarted:
+        again = restarted.post(
+            "/api/match",
+            json={"tracks": [{"index": 0, "artist": "Étienne de Crécy", "title": "Am I Wrong"}]},
+        ).json()["results"][0]
+        assert again["from_preference"] is True
+
+
+def test_preference_endpoints_validate_and_forget(client: TestClient, library: Path) -> None:
+    scan_and_wait(client, library)
+    assert client.get("/api/preferences").json()["preferences"] == []
+
+    bad = client.post(
+        "/api/preferences", json={"artist": "A", "title": "B", "track_id": "deadbeef0000"}
+    )
+    assert bad.status_code == 400
+    assert bad.json()["detail"]["code"] == "UNKNOWN_TRACK"
+
+    track_id = client.post(
+        "/api/match", json={"tracks": [{"index": 0, "artist": "Étienne de Crécy", "title": "Am I Wrong"}]}
+    ).json()["results"][0]["auto_selected_id"]
+    client.post(
+        "/api/preferences",
+        json={"artist": "Étienne de Crécy", "title": "Am I Wrong", "track_id": track_id},
+    )
+    preference_id = client.get("/api/preferences").json()["preferences"][0]["id"]
+
+    assert client.delete(f"/api/preferences/{preference_id}").json()["preferences"] == []
+    assert client.delete(f"/api/preferences/{preference_id}").status_code == 404
+
+    client.post(
+        "/api/preferences",
+        json={"artist": "Étienne de Crécy", "title": "Am I Wrong", "track_id": track_id},
+    )
+    assert client.delete("/api/preferences").json()["preferences"] == []
+
+
 def test_scan_missing_folder_404(client: TestClient, tmp_path: Path) -> None:
     response = client.post("/api/scan", json={"folder": str(tmp_path / "nope")})
     assert response.status_code == 404

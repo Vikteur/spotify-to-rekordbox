@@ -4,6 +4,7 @@ import type {
   LibrarySummary,
   MatchResult,
   Playlist,
+  Preference,
   ScanStatus,
   ScoredCandidate,
 } from './types';
@@ -43,6 +44,7 @@ function candidateLabel(candidate: ScoredCandidate): string {
 
 const chipStyles: Record<string, string> = {
   auto: 'bg-green-100 text-green-800',
+  remembered: 'bg-purple-100 text-purple-800',
   manual: 'bg-blue-100 text-blue-800',
   'pick one': 'bg-amber-100 text-amber-900',
   skipped: 'bg-gray-200 text-gray-600',
@@ -73,6 +75,8 @@ export default function App() {
   const [selections, setSelections] = useState<Record<number, string>>({});
   const [matching, setMatching] = useState(false);
   const [matchError, setMatchError] = useState('');
+  const [prefs, setPrefs] = useState<Preference[]>([]);
+  const [remembered, setRemembered] = useState<Record<number, boolean>>({});
 
   // --- Section 4: export ---
   const [name, setName] = useState('');
@@ -82,6 +86,7 @@ export default function App() {
     // The library is restored from the database, so a reload needs no rescan.
     api.library().then(setLib).catch(() => undefined);
     api.scanStatus().then(setScan).catch(() => undefined);
+    api.preferences().then((r) => setPrefs(r.preferences)).catch(() => undefined);
     return () => {
       if (polling.current) window.clearInterval(polling.current);
     };
@@ -201,10 +206,47 @@ export default function App() {
         preset[result.input.index] = result.auto_selected_id ?? (result.candidates.length ? '' : SKIP);
       }
       setSelections(preset);
+      setRemembered({});
     } catch (error) {
       setMatchError(error instanceof ApiError ? error.message : String(error));
     } finally {
       setMatching(false);
+    }
+  }
+
+  /** A deliberate pick becomes this song's default for every future playlist. */
+  async function chooseVersion(result: MatchResult, value: string) {
+    setSelections((previous) => ({ ...previous, [result.input.index]: value }));
+    if (!value || value === SKIP) return;
+    try {
+      const { preferences } = await api.rememberChoice(
+        result.input.artist,
+        result.input.title,
+        value,
+      );
+      setPrefs(preferences);
+      setRemembered((previous) => ({ ...previous, [result.input.index]: true }));
+    } catch {
+      // Remembering is a convenience — never block the export on it.
+    }
+  }
+
+  async function forgetChoice(id: string) {
+    try {
+      const { preferences } = await api.forgetChoice(id);
+      setPrefs(preferences);
+    } catch (error) {
+      setMatchError(error instanceof ApiError ? error.message : String(error));
+    }
+  }
+
+  async function forgetAllChoices() {
+    try {
+      const { preferences } = await api.forgetAllChoices();
+      setPrefs(preferences);
+      setRemembered({});
+    } catch (error) {
+      setMatchError(error instanceof ApiError ? error.message : String(error));
     }
   }
 
@@ -214,8 +256,10 @@ export default function App() {
       return result.bucket === 'unmatched' && !result.candidates.length ? 'no match' : 'skipped';
     }
     if (selection === '') return result.bucket === 'unmatched' ? 'no match' : 'pick one';
-    if (selection === result.auto_selected_id) return 'auto';
-    return 'manual';
+    if (selection === result.auto_selected_id) {
+      return result.from_preference || remembered[result.input.index] ? 'remembered' : 'auto';
+    }
+    return remembered[result.input.index] ? 'remembered' : 'manual';
   }
 
   const chosenIds = results
@@ -333,6 +377,42 @@ export default function App() {
           </span>
         </div>
 
+        {prefs.length > 0 && (
+          <details className="mt-3">
+            <summary className="cursor-pointer text-gray-600">
+              {prefs.length} remembered version choice{prefs.length === 1 ? '' : 's'}
+            </summary>
+            <ul className="mt-1 rounded border border-gray-200">
+              {prefs.map((preference) => (
+                <li
+                  key={preference.id}
+                  className="flex items-center gap-2 border-b border-gray-100 px-3 py-1.5 last:border-b-0"
+                >
+                  <span className="min-w-0 flex-1 truncate">
+                    {preference.artist || '?'} – {preference.title}
+                    <span className="text-gray-400"> → </span>
+                    {preference.file_label ?? (
+                      <span className="text-amber-700">file not in your library right now</span>
+                    )}
+                  </span>
+                  <button
+                    className="shrink-0 rounded border border-gray-300 px-2 py-0.5 text-xs hover:bg-gray-50"
+                    onClick={() => forgetChoice(preference.id)}
+                  >
+                    Forget
+                  </button>
+                </li>
+              ))}
+            </ul>
+            <button
+              className="mt-2 rounded border border-gray-300 px-3 py-1 text-xs hover:bg-gray-50"
+              onClick={forgetAllChoices}
+            >
+              Forget all
+            </button>
+          </details>
+        )}
+
         {scanError && <p className="mt-2 text-red-700">{scanError}</p>}
         {libNote && <p className="mt-2 text-gray-700">{libNote}</p>}
         {scan?.state === 'scanning' && (
@@ -426,9 +506,18 @@ export default function App() {
             {results.filter((result) => result.bucket === 'auto').length} auto ·{' '}
             {results.filter((result) => result.bucket === 'ambiguous').length} to pick ·{' '}
             {results.filter((result) => result.bucket === 'unmatched').length} not found
+            {results.filter((result) => result.from_preference).length > 0 && (
+              <span className="text-purple-700">
+                {' '}· {results.filter((result) => result.from_preference).length} using a remembered version
+              </span>
+            )}
             {unresolvedCount > 0 && (
               <span className="text-amber-700"> — {unresolvedCount} still need a choice below</span>
             )}
+          </p>
+          <p className="mt-1 text-xs text-gray-500">
+            Picking a version remembers it: that file becomes this song's default in every future
+            playlist. Change the dropdown any time to overwrite it.
           </p>
           <div className="mt-3 overflow-x-auto">
             <table className="w-full border-collapse text-left">
@@ -467,12 +556,7 @@ export default function App() {
                           <select
                             className="w-full max-w-xl rounded border border-gray-300 px-2 py-1"
                             value={selections[result.input.index] ?? SKIP}
-                            onChange={(event) =>
-                              setSelections((previous) => ({
-                                ...previous,
-                                [result.input.index]: event.target.value,
-                              }))
-                            }
+                            onChange={(event) => chooseVersion(result, event.target.value)}
                           >
                             {selections[result.input.index] === '' && <option value="">— choose —</option>}
                             {result.candidates.map((candidate) => (
