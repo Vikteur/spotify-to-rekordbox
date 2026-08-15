@@ -3,8 +3,9 @@ import xml.etree.ElementTree as ET
 import pytest
 
 from server.export.m3u8 import build_m3u8
+from server.export.missing import build_missing_txt
 from server.export.rekordbox_xml import build_rekordbox_xml, path_to_location
-from server.models import LibraryTrack
+from server.models import LibraryTrack, MissingTrackInput
 
 
 def track(path: str, artist: str | None, title: str, duration: float | None,
@@ -82,6 +83,50 @@ def test_rekordbox_xml_structure_roundtrip() -> None:
     assert playlist.get("KeyType") == "0"
     assert playlist.get("Entries") == "2"
     assert [k.get("Key") for k in playlist.findall("TRACK")] == ["1", "2"]
+
+
+def missing(artist: str, title: str, had_candidates: bool = False) -> MissingTrackInput:
+    return MissingTrackInput(artist=artist, title=title, had_candidates=had_candidates)
+
+
+def test_missing_txt_lists_tracks_you_can_paste_into_a_shop() -> None:
+    text = build_missing_txt(
+        "Friday Warmup",
+        "MacBook",
+        [missing("Étienne de Crécy", "Am I Wrong"), missing("Some DJ", "Rare Dub")],
+    )
+    lines = text.splitlines()
+    assert lines[0] == "# Missing tracks"
+    assert lines[1] == "# Playlist: Friday Warmup"
+    assert "2 track(s)" in lines[2] and "MacBook" in lines[2]
+    # Everything that isn't a comment is a plain, pasteable "Artist - Title".
+    entries = [line for line in lines if line and not line.startswith("#")]
+    assert entries == ["Étienne de Crécy - Am I Wrong", "Some DJ - Rare Dub"]
+
+
+def test_missing_txt_separates_skipped_from_not_found() -> None:
+    text = build_missing_txt(
+        "Set",
+        "MacBook",
+        [missing("A", "Nowhere"), missing("B", "Passed On", had_candidates=True)],
+    )
+    assert "# Not found:" in text
+    assert "# Skipped" in text
+    # Not-found comes first: that is the part you actually go and buy.
+    assert text.index("A - Nowhere") < text.index("B - Passed On")
+
+
+def test_missing_txt_without_skipped_has_no_section_headers() -> None:
+    text = build_missing_txt("Set", "MacBook", [missing("A", "Nowhere")])
+    assert "# Not found:" not in text
+    assert "# Skipped" not in text
+
+
+def test_missing_txt_handles_a_pasted_line_with_no_artist() -> None:
+    text = build_missing_txt("Set", None, [missing("", "Just A Title")])
+    assert "Just A Title" in text
+    assert " - Just A Title" not in text
+    assert "your library" in text  # falls back when no library is named
 
 
 def test_xml_omits_duration_when_unknown_and_defaults_kind() -> None:

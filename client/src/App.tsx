@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { ApiError, api, downloadExport, parseTextPlaylist } from './api';
+import { ApiError, api, downloadExport, downloadMissing, parseTextPlaylist } from './api';
 import type {
   LibrarySummary,
   MatchResult,
@@ -372,6 +372,24 @@ export default function App() {
     setExportError('');
     try {
       await downloadExport(name, format, chosenIds);
+    } catch (error) {
+      setExportError(error instanceof ApiError ? error.message : String(error));
+    }
+  }
+
+  async function runMissingExport() {
+    setExportError('');
+    try {
+      await downloadMissing(
+        name,
+        leftOut.map((result) => ({
+          artist: result.input.artist,
+          title: result.input.title,
+          // Weak greyed-out suggestions still mean "not in the library" —
+          // only a real match you passed on counts as skipped.
+          had_candidates: result.bucket !== 'unmatched',
+        })),
+      );
     } catch (error) {
       setExportError(error instanceof ApiError ? error.message : String(error));
     }
@@ -821,6 +839,14 @@ export default function App() {
               onClick={() => runExport('xml')}
             >
               Download rekordbox .xml
+            </button>
+            <button
+              className="rounded border border-gray-300 px-4 py-2 disabled:opacity-40"
+              disabled={!leftOut.length}
+              title="The tracks you don't have — paste it into a shop's search"
+              onClick={runMissingExport}
+            >
+              Download missing .txt
             </button>
           </div>
           <p className="mt-2 text-gray-700">

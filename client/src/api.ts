@@ -116,29 +116,48 @@ export const api = {
     request<{ preferences: Preference[] }>('/api/preferences', { method: 'DELETE' }),
 };
 
-export async function downloadExport(
-  name: string,
-  format: 'm3u8' | 'xml',
-  trackIds: string[],
-): Promise<void> {
-  const response = await fetch('/api/export', {
+async function download(path: string, body: unknown, filename: string): Promise<void> {
+  const response = await fetch(path, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name, format, track_ids: trackIds }),
+    body: JSON.stringify(body),
   });
   if (!response.ok) {
     const detail = (await response.json()).detail;
     throw new ApiError(response.status, detail?.code ?? 'UNKNOWN', detail?.message ?? 'Export failed');
   }
-  const blob = await response.blob();
-  const url = URL.createObjectURL(blob);
+  const url = URL.createObjectURL(await response.blob());
   const anchor = document.createElement('a');
   anchor.href = url;
-  anchor.download = `${name.trim() || 'playlist'}.${format === 'xml' ? 'rekordbox.xml' : 'm3u8'}`;
+  anchor.download = filename;
   document.body.appendChild(anchor);
   anchor.click();
   anchor.remove();
   URL.revokeObjectURL(url);
+}
+
+export function downloadExport(
+  name: string,
+  format: 'm3u8' | 'xml',
+  trackIds: string[],
+): Promise<void> {
+  const stem = name.trim() || 'playlist';
+  return download(
+    '/api/export',
+    { name, format, track_ids: trackIds },
+    `${stem}.${format === 'xml' ? 'rekordbox.xml' : 'm3u8'}`,
+  );
+}
+
+export function downloadMissing(
+  name: string,
+  tracks: { artist: string; title: string; had_candidates: boolean }[],
+): Promise<void> {
+  return download(
+    '/api/export/missing',
+    { name, tracks },
+    `${name.trim() || 'playlist'} - missing.txt`,
+  );
 }
 
 // Paste-text fallback: one "Artist - Title" per line (numbering tolerated).

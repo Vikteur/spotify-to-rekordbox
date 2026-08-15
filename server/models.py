@@ -8,6 +8,12 @@ class PlaylistTrackInput(BaseModel):
     duration_sec: float | None = None
 
 
+class MissingTrackInput(BaseModel):
+    artist: str = ""
+    title: str
+    had_candidates: bool = False   # skipped despite options, vs nothing found
+
+
 class VersionOut(BaseModel):
     descriptors: list[str]
     remixer: str | None

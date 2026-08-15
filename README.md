@@ -5,7 +5,7 @@ A small local webapp that turns a **public Spotify playlist** into a **rekordbox
 1. Name a library (one per device) and load it — **scan a music folder**, **import a rekordbox XML export**, or both
 2. Paste a Spotify playlist link (no Spotify account or API key needed)
 3. It fuzzy-matches each Spotify track against your library; when several versions exist (original + remixes), **you pick one from a dropdown** — and it **remembers that pick** as the song's default for every future playlist
-4. Download a `.m3u8` or rekordbox `.xml` playlist and import it into rekordbox
+4. Download a `.m3u8` or rekordbox `.xml` playlist and import it into rekordbox — plus a `.txt` shopping list of everything the playlist wanted that you don't own
 
 Your library is kept in a local SQLite file, so you scan once — not on every launch.
 
@@ -92,6 +92,8 @@ They do two things:
 
 **M3U8 (recommended):** rekordbox → `File › Import › Import Playlist` → pick the downloaded `.m3u8`. Tracks already in your collection are matched by file path (cues/grids untouched); new files are added and analyzed.
 
+**Missing tracks (.txt):** not for rekordbox — a shopping list of the playlist's tracks that aren't in the selected library. Plain `Artist - Title` lines so it pastes straight into a shop's search box (or back into this app's paste-a-tracklist box once you've bought them), with a couple of `#` comment lines for context. Tracks nothing matched are listed under *Not found*; ones that had a real match you passed on are listed separately under *Skipped*, so the buy-list stays honest.
+
 **rekordbox XML:** `Preferences › Advanced › Database › rekordbox xml` → browse to the downloaded `.rekordbox.xml`. Show the xml pane via `Preferences › View › Layout › rekordbox xml`. In the tree's *rekordbox xml* section, right-click the playlist → `Import Playlist`.
 
 ## Checking the Spotify fetch
@@ -122,7 +124,7 @@ python scripts/probe_spotify.py "https://open.spotify.com/playlist/<id>"
 ## Development
 
 ```bash
-.venv/bin/pytest           # 207 tests: parsers, scanner, database, libraries, playlists, matcher calibration, preferences, exports, API
+.venv/bin/pytest           # 212 tests: parsers, scanner, database, libraries, playlists, matcher calibration, preferences, exports, API
 npm run typecheck          # strict TS on the client
 node scripts/screenshot.mjs <music-folder>   # regenerate docs/screenshot.png (app must be running)
 ```

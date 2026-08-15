@@ -10,12 +10,13 @@ from pydantic import BaseModel
 
 from server import db
 from server.export.m3u8 import build_m3u8
+from server.export.missing import build_missing_txt
 from server.export.rekordbox_xml import build_rekordbox_xml
 from server.library import LIBRARY
 from server.matcher.index import LibraryIndex
 from server.matcher.match import match_playlist
 from server.matcher.signature import signature_id, signature_of
-from server.models import PlaylistTrackInput
+from server.models import MissingTrackInput, PlaylistTrackInput
 from server.playlist_import import (
     PlaylistImportError,
     parse_playlist,
@@ -71,6 +72,11 @@ class ExportRequest(BaseModel):
     name: str
     format: str  # "m3u8" | "xml"
     track_ids: list[str]
+
+
+class MissingExportRequest(BaseModel):
+    name: str
+    tracks: list[MissingTrackInput]
 
 
 class PreferenceRequest(BaseModel):
@@ -433,6 +439,22 @@ def export(request: ExportRequest) -> Response:
         content=content.encode("utf-8"),
         media_type=media_type,
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.post("/api/export/missing")
+def export_missing(request: MissingExportRequest) -> Response:
+    """The playlist's tracks that this library doesn't have — a shopping list."""
+    if not request.tracks:
+        raise _error(400, "NO_TRACKS", "Nothing is missing — there's nothing to list.")
+    content = build_missing_txt(request.name, LIBRARY.name, request.tracks)
+    stem = _safe_filename(request.name)
+    return Response(
+        content=content.encode("utf-8"),
+        media_type="text/plain; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="{stem} - missing.txt"'
+        },
     )
 
 

@@ -535,6 +535,32 @@ def test_spotify_route_fetch_failure_hints_paste(
     assert "paste" in detail["message"].lower()
 
 
+def test_export_missing_tracks_txt(client: TestClient, library: Path) -> None:
+    scan_and_wait(client, library)
+    response = client.post(
+        "/api/export/missing",
+        json={
+            "name": "Friday Warmup",
+            "tracks": [
+                {"artist": "Ghost Artist", "title": "Not In My Library"},
+                {"artist": "Some DJ", "title": "Passed On", "had_candidates": True},
+            ],
+        },
+    )
+    assert response.status_code == 200
+    assert response.headers["content-disposition"] == (
+        'attachment; filename="Friday Warmup - missing.txt"'
+    )
+    assert response.headers["content-type"].startswith("text/plain")
+    body = response.text
+    assert "Ghost Artist - Not In My Library" in body
+    assert "MacBook" in body  # named the library it is missing from
+    assert "# Skipped" in body
+
+    empty = client.post("/api/export/missing", json={"name": "x", "tracks": []})
+    assert empty.status_code == 400
+
+
 def test_export_unknown_id_400(client: TestClient, library: Path) -> None:
     scan_and_wait(client, library)
     response = client.post(
