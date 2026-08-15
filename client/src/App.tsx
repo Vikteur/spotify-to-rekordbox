@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { ApiError, api, downloadExport, downloadMissing, parseTextPlaylist } from './api';
 import type {
   LibrarySummary,
+  LibraryTrack,
   MatchResult,
   Playlist,
   PlaylistInfo,
@@ -68,6 +69,7 @@ export default function App() {
   const [importing, setImporting] = useState(false);
   const [newLibName, setNewLibName] = useState('');
   const [playlists, setPlaylists] = useState<PlaylistInfo[]>([]);
+  const [openLists, setOpenLists] = useState<Record<number, LibraryTrack[] | 'loading'>>({});
   const [filterId, setFilterId] = useState<number | null>(null);
   const plInput = useRef<HTMLInputElement | null>(null);
   const xmlInput = useRef<HTMLInputElement | null>(null);
@@ -224,6 +226,23 @@ export default function App() {
       setScanError(error instanceof ApiError ? error.message : String(error));
     } finally {
       if (plInput.current) plInput.current.value = '';
+    }
+  }
+
+  /** Fetch a playlist's tracks the first time it is expanded. */
+  async function openPlaylist(id: number) {
+    if (openLists[id]) return;
+    setOpenLists((previous) => ({ ...previous, [id]: 'loading' }));
+    try {
+      const { tracks } = await api.playlistTracks(id);
+      setOpenLists((previous) => ({ ...previous, [id]: tracks }));
+    } catch (error) {
+      setOpenLists((previous) => {
+        const next = { ...previous };
+        delete next[id];
+        return next;
+      });
+      setScanError(error instanceof ApiError ? error.message : String(error));
     }
   }
 
@@ -565,29 +584,66 @@ export default function App() {
               </span>
             </div>
             {playlists.length > 0 && (
-              <ul className="mt-2 rounded border border-gray-200">
-                {playlists.map((list) => (
-                  <li
-                    key={list.id}
-                    className="flex items-center gap-2 border-b border-gray-100 px-3 py-1.5 last:border-b-0"
-                  >
-                    <span aria-hidden>★</span>
-                    <span className="min-w-0 flex-1 truncate">{list.name}</span>
-                    <span className="shrink-0 text-gray-500">
-                      {list.track_count.toLocaleString()} tracks
-                      {list.missing_count > 0 && (
-                        <span className="text-amber-700"> · {list.missing_count} not here</span>
-                      )}
-                    </span>
-                    <button
-                      className="shrink-0 rounded border border-gray-300 px-2 py-0.5 text-xs hover:bg-gray-50"
-                      onClick={() => removePlaylist(list.id)}
+              <div className="mt-2 rounded border border-gray-200">
+                {playlists.map((list) => {
+                  const contents = openLists[list.id];
+                  return (
+                    <details
+                      key={list.id}
+                      className="border-b border-gray-100 last:border-b-0"
+                      onToggle={(event) => {
+                        if (event.currentTarget.open) openPlaylist(list.id);
+                      }}
                     >
-                      Remove
-                    </button>
-                  </li>
-                ))}
-              </ul>
+                      <summary className="flex cursor-pointer items-center gap-2 px-3 py-1.5 hover:bg-gray-50">
+                        <span aria-hidden>★</span>
+                        <span className="min-w-0 flex-1 truncate">{list.name}</span>
+                        <span className="shrink-0 text-gray-500">
+                          {list.track_count.toLocaleString()} tracks
+                          {list.missing_count > 0 && (
+                            <span className="text-amber-700"> · {list.missing_count} not here</span>
+                          )}
+                        </span>
+                        <button
+                          className="shrink-0 rounded border border-gray-300 px-2 py-0.5 text-xs hover:bg-white"
+                          onClick={(event) => {
+                            // Inside a <summary>, a click would also toggle it.
+                            event.preventDefault();
+                            event.stopPropagation();
+                            removePlaylist(list.id);
+                          }}
+                        >
+                          Remove
+                        </button>
+                      </summary>
+                      {contents === 'loading' ? (
+                        <p className="px-3 pb-2 pl-8 text-gray-500">Loading…</p>
+                      ) : (
+                        <ol className="pb-2 pl-8 pr-3">
+                          {(contents ?? []).map((track, position) => (
+                            <li key={track.id} className="flex gap-2 py-0.5 text-gray-600">
+                              <span className="w-6 shrink-0 text-right text-gray-400">
+                                {position + 1}
+                              </span>
+                              <span className="min-w-0 flex-1 truncate" title={track.path}>
+                                {track.artist ? `${track.artist} – ` : ''}
+                                {track.title}
+                              </span>
+                              <span className="shrink-0 text-xs text-gray-400">
+                                {[
+                                  formatDuration(track.duration_sec),
+                                  track.bpm ? `${Math.round(track.bpm)} BPM` : '',
+                                  track.musical_key ?? '',
+                                ].filter(Boolean).join(' · ')}
+                              </span>
+                            </li>
+                          ))}
+                        </ol>
+                      )}
+                    </details>
+                  );
+                })}
+              </div>
             )}
           </div>
         )}

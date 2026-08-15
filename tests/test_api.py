@@ -320,6 +320,37 @@ def test_playlist_filter_narrows_matching(client: TestClient, library: Path) -> 
     assert narrowed["results"][1]["bucket"] == "unmatched"  # outside the playlist
 
 
+def test_playlist_contents_can_be_opened(client: TestClient, library: Path) -> None:
+    scan_and_wait(client, library)
+    playlist_id = client.post(
+        "/api/library/playlists?name=Most played 2026.m3u8",
+        content=m3u8_of(
+            library / "House" / "substitution-ext.mp3",
+            library / "House" / "am-i-wrong.mp3",
+        ),
+    ).json()["playlist_id"]
+
+    tracks = client.get(f"/api/library/playlists/{playlist_id}/tracks").json()["tracks"]
+    # Exported order is preserved, not re-sorted.
+    assert [track["filename"] for track in tracks] == ["substitution-ext", "am-i-wrong"]
+    assert tracks[1]["artist"] == "Étienne de Crécy"
+
+    assert client.get("/api/library/playlists/9999/tracks").status_code == 404
+
+
+def test_playlist_contents_are_scoped_to_their_library(
+    client: TestClient, library: Path
+) -> None:
+    scan_and_wait(client, library)
+    playlist_id = client.post(
+        "/api/library/playlists?name=Mine.m3u8",
+        content=m3u8_of(library / "House" / "am-i-wrong.mp3"),
+    ).json()["playlist_id"]
+
+    client.post("/api/libraries", json={"name": "Studio PC"})
+    assert client.get(f"/api/library/playlists/{playlist_id}/tracks").status_code == 404
+
+
 def test_playlists_are_listed_and_removable(client: TestClient, library: Path) -> None:
     scan_and_wait(client, library)
     data = m3u8_of(library / "House" / "substitution-ext.mp3")

@@ -546,6 +546,17 @@ def playlist_membership(library_id: int) -> dict[str, list[str]]:
     return membership
 
 
+def playlist_tracks(playlist_id: int) -> list[LibraryTrack]:
+    """The playlist's tracks in the order they were exported."""
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT t.* FROM playlist_tracks pt JOIN tracks t ON t.id = pt.track_id "
+            "WHERE pt.playlist_id = ? ORDER BY pt.position",
+            (playlist_id,),
+        ).fetchall()
+    return [_to_track(row) for row in rows]
+
+
 def playlist_track_ids(playlist_id: int) -> set[str]:
     with connect() as conn:
         rows = conn.execute(

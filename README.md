@@ -76,6 +76,8 @@ They do two things:
 
 **Ranking, always.** A file that's in one of your playlists is offered first and marked `★` in the picker, and being in several ranks higher still. This is deliberately a nudge, not a veto: it settles a close call between two versions but never outweighs a version or artist mismatch, so playing the radio edit constantly won't make it stand in for the original a playlist asked for. Where two candidates would otherwise be too close to call, membership is enough to settle it into an automatic pick.
 
+Click a playlist row to fold it open and see exactly what it contains, in the order it was exported, with each track's duration, BPM and key.
+
 **Filtering, on demand.** The dropdown next to *Match against library* can narrow matching to a single playlist — "which of this Spotify playlist do I have in my 2026 most-played" — with everything outside it reported as not found. A file that appears in several sources is stored once but claimed by each, so removing one source only drops the tracks nothing else claims — and a folder rescan never blanks the BPM and key that came from rekordbox, since a scan can't observe those.
 
 ## Usage notes
@@ -124,7 +126,7 @@ python scripts/probe_spotify.py "https://open.spotify.com/playlist/<id>"
 ## Development
 
 ```bash
-.venv/bin/pytest           # 212 tests: parsers, scanner, database, libraries, playlists, matcher calibration, preferences, exports, API
+.venv/bin/pytest           # 214 tests: parsers, scanner, database, libraries, playlists, matcher calibration, preferences, exports, API
 npm run typecheck          # strict TS on the client
 node scripts/screenshot.mjs <music-folder>   # regenerate docs/screenshot.png (app must be running)
 ```

@@ -1,5 +1,6 @@
 import type {
   LibrarySummary,
+  LibraryTrack,
   MatchResult,
   Playlist,
   PlaylistImportResult,
@@ -100,6 +101,8 @@ export const api = {
     }
     return response.json() as Promise<PlaylistImportResult>;
   },
+  playlistTracks: (id: number) =>
+    request<{ tracks: LibraryTrack[] }>(`/api/library/playlists/${id}/tracks`),
   removePlaylist: (id: number) =>
     request<{ playlists: PlaylistInfo[] }>(`/api/library/playlists/${id}`, {
       method: 'DELETE',

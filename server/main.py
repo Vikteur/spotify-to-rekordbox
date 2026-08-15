@@ -287,6 +287,15 @@ def get_playlists() -> dict:
     return {"playlists": [p.model_dump() for p in db.list_playlists(LIBRARY.id)]}
 
 
+@app.get("/api/library/playlists/{playlist_id}/tracks")
+def get_playlist_tracks(playlist_id: int) -> dict:
+    """What's actually in an imported playlist, in its exported order."""
+    library_id = _require_library(None)
+    if playlist_id not in {p.id for p in db.list_playlists(library_id)}:
+        raise _error(404, "NO_PLAYLIST", f"No playlist with id {playlist_id}.")
+    return {"tracks": [track.model_dump() for track in db.playlist_tracks(playlist_id)]}
+
+
 @app.delete("/api/library/playlists/{playlist_id}")
 def remove_playlist(playlist_id: int) -> dict:
     library_id = _require_library(None)
