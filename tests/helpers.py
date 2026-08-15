@@ -10,6 +10,7 @@ import wave
 from pathlib import Path
 
 from mutagen.easyid3 import EasyID3
+from mutagen.id3 import ID3, TKEY, TXXX
 from mutagen.mp3 import MP3
 
 # MPEG-1 Layer III, 32 kbps (bitrate index 1), 44100 Hz (index 0), mono.
@@ -24,10 +25,12 @@ def silent_mp3_bytes(seconds: float = 1.0) -> bytes:
 
 
 def write_mp3(path: Path, seconds: float = 1.0, *, artist: str | None = None,
-              title: str | None = None, album: str | None = None) -> Path:
+              title: str | None = None, album: str | None = None,
+              bpm: str | None = None, key: str | None = None,
+              key_frame: str = "TKEY") -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(silent_mp3_bytes(seconds))
-    if artist or title or album:
+    if artist or title or album or bpm:
         audio = MP3(path)
         audio.add_tags()
         audio.save()
@@ -38,7 +41,18 @@ def write_mp3(path: Path, seconds: float = 1.0, *, artist: str | None = None,
             tags["title"] = title
         if album:
             tags["album"] = album
+        if bpm:
+            tags["bpm"] = bpm
         tags.save()
+    if key:
+        # rekordbox and Serato write TKEY; Mixed In Key writes TXXX:INITIALKEY.
+        id3 = ID3(path)
+        id3.add(
+            TKEY(encoding=3, text=[key])
+            if key_frame == "TKEY"
+            else TXXX(encoding=3, desc="INITIALKEY", text=[key])
+        )
+        id3.save()
     return path
 
 

@@ -57,12 +57,12 @@ Libraries are fully independent: their tracks, their sources, and their remember
 
 Each library is built from one or more sources — a scanned folder, an imported rekordbox XML, or several of each, merged and deduplicated by file path:
 
-**Scan a folder.** Reads tags (and filenames, for untagged files) from every audio file underneath. The first pass over a big folder takes a while; afterwards each file is re-read only when its size or modification time changed, so repeat scans take seconds. **Force rescan** ignores that and re-reads everything.
+**Scan a folder.** Reads tags (and filenames, for untagged files) from every audio file underneath, **including BPM and musical key when they are written into the file** — rekordbox and Serato store key in ID3 `TKEY`, Mixed In Key uses `TXXX:INITIALKEY`, and BPM lives in `TBPM` (MP4 `tmpo`, Vorbis `BPM` for m4a/FLAC). Nonsense values (`0`, unparseable, out of a 20–300 range) are ignored rather than stored. The first pass over a big folder takes a while; afterwards each file is re-read only when its size or modification time changed, so repeat scans take seconds. **Force rescan** ignores that and re-reads everything.
 
 **Import a rekordbox XML export.** In rekordbox: `File › Export Collection in xml format`, then pick that file in the app. This is often the better source:
 
 - it covers tracks on drives that aren't plugged in right now (you'll be told how many are currently missing — they still match, and rekordbox will find them once the drive is connected)
-- it carries rekordbox's own BPM and key
+- it carries rekordbox's own analysed BPM and key, which beat whatever a tagger wrote into the file (and a later folder rescan will not take that back)
 - it's near-instant, no matter how big the collection is
 - rekordbox sometimes stores the version in a separate `Mix` field; that gets folded back into the title so the remix picker still works
 
@@ -112,7 +112,7 @@ python scripts/probe_spotify.py "https://open.spotify.com/playlist/<id>"
 ## Development
 
 ```bash
-.venv/bin/pytest           # 174 tests: parsers, scanner, database, libraries, matcher calibration, preferences, exports, API
+.venv/bin/pytest           # 180 tests: parsers, scanner, database, libraries, matcher calibration, preferences, exports, API
 npm run typecheck          # strict TS on the client
 node scripts/screenshot.mjs <music-folder>   # regenerate docs/screenshot.png (app must be running)
 ```

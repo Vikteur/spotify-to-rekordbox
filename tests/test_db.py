@@ -237,7 +237,7 @@ def test_rescanning_a_folder_does_not_steal_tracks_from_another_source(lib: int)
 
 
 def test_a_folder_rescan_keeps_bpm_and_key_it_cannot_see(lib: int) -> None:
-    """Only rekordbox knows BPM/key; a folder scan must not blank them."""
+    """A scan of files without analysis tags must not blank rekordbox's values."""
     xml = db.upsert_source(lib, "xml", "rekordbox.xml")
     folder = db.upsert_source(lib, "folder", "/music")
     path = "/music/shared.mp3"
@@ -252,6 +252,31 @@ def test_a_folder_rescan_keeps_bpm_and_key_it_cannot_see(lib: int) -> None:
     assert stored.bpm == 124.0
     assert stored.musical_key == "Am"
     assert stored.artist == "Tagged Artist"  # observable fields do update
+
+
+def test_rekordbox_analysis_outranks_file_tags(lib: int) -> None:
+    """Both sources can supply BPM/key; rekordbox analysed it, so it wins."""
+    folder = db.upsert_source(lib, "folder", "/music")
+    xml = db.upsert_source(lib, "xml", "rekordbox.xml")
+    path = "/music/shared.mp3"
+
+    db.replace_source_tracks(
+        folder, [track("a" * 12, path, bpm=128.0, musical_key="8A", tag_source="tags")]
+    )
+    assert db.all_tracks()[0].bpm == 128.0  # tags fill the gap
+
+    db.replace_source_tracks(
+        xml, [track("a" * 12, path, bpm=127.98, musical_key="Am", tag_source="rekordbox")]
+    )
+    stored = db.all_tracks()[0]
+    assert stored.bpm == 127.98
+    assert stored.musical_key == "Am"
+
+    # ...and a later folder rescan does not take it back.
+    db.replace_source_tracks(
+        folder, [track("a" * 12, path, bpm=128.0, musical_key="8A", tag_source="tags")]
+    )
+    assert db.all_tracks()[0].bpm == 127.98
 
 
 def test_dropping_a_track_from_a_source_removes_it_when_unclaimed(lib: int) -> None:

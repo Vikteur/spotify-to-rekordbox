@@ -89,20 +89,28 @@ _COLUMNS = (
     "size_bytes", "mtime_ms",
 )
 
-# Fields a source may not be able to observe: a folder scan can read tags but
-# never BPM or key, so it must not blank out what a rekordbox import supplied.
+# BPM and key can come from two places: a rekordbox XML export (analysed) or a
+# file's own tags (whatever a tagger wrote). rekordbox's values win; file tags
+# only fill in what rekordbox has not supplied, and neither ever blanks the
+# other out.
 _PRESERVED = ("bpm", "musical_key")
+
+
+def _assignment(column: str) -> str:
+    if column not in _PRESERVED:
+        return f"{column} = excluded.{column}"
+    return (
+        f"{column} = CASE WHEN excluded.tag_source = 'rekordbox' "
+        f"THEN COALESCE(excluded.{column}, tracks.{column}) "
+        f"ELSE COALESCE(tracks.{column}, excluded.{column}) END"
+    )
+
 
 _UPSERT = f"""
 INSERT INTO tracks ({", ".join(_COLUMNS)})
 VALUES ({", ".join("?" * len(_COLUMNS))})
 ON CONFLICT(id) DO UPDATE SET
-{", ".join(
-    f"{column} = COALESCE(excluded.{column}, tracks.{column})"
-    if column in _PRESERVED
-    else f"{column} = excluded.{column}"
-    for column in _COLUMNS if column != "id"
-)}
+{", ".join(_assignment(column) for column in _COLUMNS if column != "id")}
 """
 
 _DELETE_ORPHANS = """

@@ -32,10 +32,15 @@ function versionLabel(descriptors: string[], remixer: string | null): string {
 function candidateLabel(candidate: ScoredCandidate): string {
   const { track } = candidate;
   const version = versionLabel(candidate.version.descriptors, candidate.version.remixer);
+  const analysis = [
+    track.bpm ? `${Math.round(track.bpm)} BPM` : '',
+    track.musical_key ?? '',
+  ].filter(Boolean).join(' · ');
   const bits = [
     `${track.filename}.${track.ext}`,
     version,
     `${formatDuration(track.duration_sec)}${formatDelta(candidate.duration_delta_sec)}`,
+    analysis,
     track.bitrate_kbps ? `${track.ext.toUpperCase()} ${track.bitrate_kbps}` : track.ext.toUpperCase(),
     `${Math.round(candidate.score * 100)}%`,
   ];
