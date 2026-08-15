@@ -92,5 +92,3 @@ node scripts/screenshot.mjs <music-folder>   # regenerate docs/screenshot.png (a
 ```
 
 The matching thresholds live in `server/matcher/score.py`; `tests/test_matcher.py` is the calibration harness — tune, run, repeat.
-
-> This folder is fully self-contained (own dependencies, no imports from the surrounding repo) so it can be copied out into its own repository as-is.
