@@ -49,6 +49,8 @@ Both need the venv active (the server runs via `python -m ...`). The server bind
 
 **The DJ app has no login.** No account, no sign-in, no Spotify authentication — open `/` and you are straight in. The only gated route is `/g/<token>`, the magic link you hand to a couple or their guests for the wedding intake; a token there is what a guest gets, not something you need.
 
+> ⚠️ **Auth is switched off on this branch, on purpose and temporarily.** The magic-link checks are bypassed (`AUTH_DISABLED`, `server/couples_api.py`) and the proxy password is commented out in `deploy/Caddyfile` and `deploy/nginx/rekord.conf`. Deployed as-is, the DJ side is public — including `/api/couples`, which hands every couple's magic link to any caller, and `/api/scan`, which reads folders on the server. To put it back: set `AUTH_DISABLED=0` and un-comment the two `basic_auth` blocks.
+
 So if `/` asks you to sign in, you are looking at a *different program*. The usual cause is something else already sitting on port 8000 (Docker dashboards, other dev servers and admin panels all like that port), so your browser shows you *its* page instead. The app now refuses to start in that case and says so; to move it out of the way:
 
 ```bash

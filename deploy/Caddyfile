@@ -3,26 +3,31 @@
 {$APP_DOMAIN} {
 	encode zstd gzip
 
-	# --- who gets in without a password ---------------------------------
-	# The app has no auth of its own: it was built as a single-user local
-	# tool, and /api/couples/{id} hands out both magic-link tokens to anyone
-	# who asks (server/couples_api.py:91). So everything is password-gated
-	# here EXCEPT what a guest on their phone genuinely needs:
+	# --- TEMPORARY: password gate switched off --------------------------
+	# Deliberately open for now. Restore by un-commenting the @dj matcher and
+	# the basic_auth block below — both, together: Caddy fails to start on a
+	# named matcher that nothing uses.
+	#
+	# What the gate used to cover, and what is therefore public right now:
+	# the DJ UI, /api/couples, /api/library, /api/export and /api/scan. The
+	# app has no auth of its own — it was built as a single-user local tool —
+	# and /api/couples/{id} hands out both magic-link tokens to anyone who
+	# asks (server/couples_api.py:91).
+	#
+	# These four were open to guests even with the gate on, and stay open:
 	#
 	#   /g/*          the magic-link page itself
-	#   /api/guest/*  the guest API — the token in the path is its own auth
+	#   /api/guest/*  the guest API — the token in the path was its own auth
 	#   /assets/*     the JS/CSS bundle the page loads
 	#   /api/health   uptime monitoring; returns only {"ok":true}
 	#
-	# Anything else — the DJ UI, /api/couples, /api/library, /api/export,
-	# /api/scan — needs the password.
-	@dj not path /g/* /api/guest/* /assets/* /api/health
-
-	basic_auth @dj {
-		# Generate the hash with:  docker run --rm caddy:2-alpine caddy hash-password --plaintext 'yourpassword'
-		# Then put it in .env as DJ_PASSWORD_HASH (escape every $ as $$ — see .env.example).
-		{$DJ_USER:dj} {$DJ_PASSWORD_HASH}
-	}
+	# @dj not path /g/* /api/guest/* /assets/* /api/health
+	#
+	# basic_auth @dj {
+	# 	# Generate the hash with:  docker run --rm caddy:2-alpine caddy hash-password --plaintext 'yourpassword'
+	# 	# Then put it in .env as DJ_PASSWORD_HASH (escape every $ as $$ — see .env.example).
+	# 	{$DJ_USER:dj} {$DJ_PASSWORD_HASH}
+	# }
 
 	reverse_proxy app:8000
 

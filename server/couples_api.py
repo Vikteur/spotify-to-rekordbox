@@ -15,6 +15,7 @@ Two audiences share this router:
   one shared link must not let a guest shuffle everyone else's picks.
 """
 
+import os
 import sqlite3
 
 from fastapi import APIRouter, HTTPException
@@ -209,10 +210,35 @@ def get_changes(couple_id: int, limit: int = 100) -> dict:
     return {"changes": couples.list_changes(couple_id, limit=min(limit, 500))}
 
 
+# --- TEMPORARY: auth switched off -------------------------------------------
+# Turned off deliberately, together with the proxy basic_auth in
+# deploy/Caddyfile and deploy/nginx/rekord.conf. While this is on, a magic link
+# is checked for nothing: revoked links work, expired links work, and a friends
+# link gets the couple's full read/write scope.
+#
+#   AUTH_DISABLED=0    put the checks back without touching the code
+#
+# To restore for good: delete this block and the guard at the top of
+# _resolve_token, then un-comment the basic_auth blocks under deploy/.
+_AUTH_ON_VALUES = {"0", "false", "no", "off", ""}
+
+
+def auth_disabled() -> bool:
+    return os.environ.get("AUTH_DISABLED", "1").strip().lower() not in _AUTH_ON_VALUES
+
+
 # --- guest routes -----------------------------------------------------------
 
 def _resolve_token(token: str) -> tuple[sqlite3.Row, str]:
     found = couples.find_by_token(token)
+    if auth_disabled():
+        # The token still has to name a real couple — it is the record's
+        # identifier as much as its credential, and falling back to "some
+        # couple" would let a stale link rewrite the wrong wedding's list.
+        # Every actual check below is skipped.
+        if found is None:
+            raise _error(404, "BAD_LINK", "This link isn't valid. Ask your DJ for a fresh one.")
+        return found[0], "couple"
     if found is None:
         raise _error(404, "BAD_LINK", "This link isn't valid. Ask your DJ for a fresh one.")
     couple, scope = found

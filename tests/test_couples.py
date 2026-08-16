@@ -32,6 +32,10 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     monkeypatch.setattr(db, "DB_PATH", tmp_path / "library.db")
     monkeypatch.setattr(main, "SCANNER", Scanner())
     monkeypatch.setattr(main, "_index_cache", None)
+    # Auth ships switched off right now (couples_api.auth_disabled). The link
+    # tests below cover the real gate, so pin it on here; the bypass itself is
+    # covered by test_auth_disabled_bypasses_every_link_check.
+    monkeypatch.setenv("AUTH_DISABLED", "0")
     spotify_search.reset()
     with TestClient(main.app) as client:
         yield client
@@ -121,6 +125,30 @@ def test_bad_revoked_rotated_and_expired_links(client: TestClient) -> None:
     gone = client.get(f"/api/guest/{expired['links']['couple']['token']}")
     assert gone.status_code == 410
     assert gone.json()["detail"]["code"] == "LINK_EXPIRED"
+
+
+def test_auth_disabled_bypasses_every_link_check(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The temporary AUTH_DISABLED switch. Delete this with the switch."""
+    monkeypatch.setenv("AUTH_DISABLED", "1")
+
+    detail = make_couple(client)
+    cid = detail["id"]
+    friends_token = detail["links"]["friends"]["token"]
+
+    # A friends link now opens the couple's whole record, not the guest slice.
+    assert client.get(f"/api/guest/{friends_token}").json()["scope"] == "couple"
+
+    # Revoked and expired links keep working.
+    client.post(f"/api/couples/{cid}/tokens/friends/revoke", json={"revoked": True})
+    assert client.get(f"/api/guest/{friends_token}").status_code == 200
+
+    expired = make_couple(client, wedding_date=PAST)
+    assert client.get(f"/api/guest/{expired['links']['couple']['token']}").status_code == 200
+
+    # An unknown token still 404s: it names the record, not just the caller.
+    assert client.get("/api/guest/not-a-real-token").status_code == 404
 
 
 # --- entries: idempotency, slots, caps --------------------------------------
