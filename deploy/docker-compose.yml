@@ -1,0 +1,52 @@
+# Lives on the server at $APP_DIR/docker-compose.yml (scp'd there by CI).
+# Values come from the .env file next to it; CI rewrites APP_IMAGE on deploy.
+name: rekordmatch
+
+services:
+  app:
+    image: ${APP_IMAGE:?APP_IMAGE is not set in .env}
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      # The SQLite library + couples DB. Survives every deploy.
+      - data:/app/data
+    ports:
+      # Loopback only: nothing reaches this except the proxy on the same box.
+      - "127.0.0.1:${APP_PORT:-8000}:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import sys,urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/health',timeout=3).status==200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  # Optional TLS terminator. Enable by putting COMPOSE_PROFILES=proxy in .env.
+  # Skip it entirely if you already run nginx/Traefik on this box.
+  caddy:
+    profiles: [proxy]
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on: [app]
+    ports:
+      - "80:80"
+      - "443:443"
+    # env_file, not `environment:` — the bcrypt hash is full of $ characters
+    # and must reach Caddy untouched.
+    env_file:
+      - .env
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+volumes:
+  data:
+  caddy-data:
+  caddy-config:

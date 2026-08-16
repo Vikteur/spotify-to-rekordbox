@@ -1,0 +1,48 @@
+# Caddy gets a real certificate from Let's Encrypt on first boot, as long as
+# APP_DOMAIN's A record already points at this server and 80/443 are open.
+{$APP_DOMAIN} {
+	encode zstd gzip
+
+	# --- who gets in without a password ---------------------------------
+	# The app has no auth of its own: it was built as a single-user local
+	# tool, and /api/couples/{id} hands out both magic-link tokens to anyone
+	# who asks (server/couples_api.py:91). So everything is password-gated
+	# here EXCEPT what a guest on their phone genuinely needs:
+	#
+	#   /g/*          the magic-link page itself
+	#   /api/guest/*  the guest API — the token in the path is its own auth
+	#   /assets/*     the JS/CSS bundle the page loads
+	#   /api/health   uptime monitoring; returns only {"ok":true}
+	#
+	# Anything else — the DJ UI, /api/couples, /api/library, /api/export,
+	# /api/scan — needs the password.
+	@dj not path /g/* /api/guest/* /assets/* /api/health
+
+	basic_auth @dj {
+		# Generate the hash with:  docker run --rm caddy:2-alpine caddy hash-password --plaintext 'yourpassword'
+		# Then put it in .env as DJ_PASSWORD_HASH (escape every $ as $$ — see .env.example).
+		{$DJ_USER:dj} {$DJ_PASSWORD_HASH}
+	}
+
+	reverse_proxy app:8000
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "SAMEORIGIN"
+	}
+
+	# A magic link is a secret sitting in the URL, so the guest page must never
+	# send its own URL onward in a Referer header. Set as two non-overlapping
+	# matchers: two header directives both writing Referrer-Policy would fight,
+	# and the broader one wins.
+	@guest path /g/*
+	@notguest not path /g/*
+	header @guest Referrer-Policy "no-referrer"
+	header @notguest Referrer-Policy "strict-origin-when-cross-origin"
+
+	log {
+		output stdout
+		format console
+	}
+}

@@ -1,0 +1,17 @@
+.git/
+.github/
+.claude/
+.cache/
+.pytest_cache/
+.venv/
+node_modules/
+dist/
+data/
+docs/
+tests/
+scripts/
+__pycache__/
+**/__pycache__/
+*.pyc
+conftest.py
+README.md
