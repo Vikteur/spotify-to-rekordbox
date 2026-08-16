@@ -4,11 +4,12 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import Response
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from server import db
+from server import couples, db
+from server.couples_api import router as couples_router
 from server.export.m3u8 import build_m3u8
 from server.export.missing import build_missing_txt
 from server.export.rekordbox_xml import build_rekordbox_xml
@@ -36,6 +37,7 @@ from server.spotify.parse_embed import (
 async def lifespan(_: FastAPI):
     # Restore the active library from disk so a restart needs no rescan.
     db.init()
+    couples.init()
     LIBRARY.load()
     yield
 
@@ -72,11 +74,13 @@ class ExportRequest(BaseModel):
     name: str
     format: str  # "m3u8" | "xml"
     track_ids: list[str]
+    couple_id: int | None = None   # apply this couple's never list
 
 
 class MissingExportRequest(BaseModel):
     name: str
     tracks: list[MissingTrackInput]
+    couple_id: int | None = None
 
 
 class PreferenceRequest(BaseModel):
@@ -427,6 +431,17 @@ def _safe_filename(name: str) -> str:
     return cleaned or "playlist"
 
 
+def _drop_blocked(tracks: list, couple_id: int | None) -> list:
+    """A couple's never list keeps its songs out of *every* export for them."""
+    if couple_id is None:
+        return tracks
+    keys = couples.blocked_keys(couple_id)
+    return [
+        track for track in tracks
+        if not couples.is_blocked(track.artist, track.title, keys)
+    ]
+
+
 @app.post("/api/export")
 def export(request: ExportRequest) -> Response:
     if not LIBRARY.is_loaded():
@@ -437,8 +452,14 @@ def export(request: ExportRequest) -> Response:
         if track is None:
             raise _error(400, "UNKNOWN_TRACK", f"Unknown track id {track_id!r}.")
         tracks.append(track)
+    tracks = _drop_blocked(tracks, request.couple_id)
     if not tracks:
-        raise _error(400, "NO_TRACKS", "Nothing selected to export.")
+        raise _error(
+            400, "NO_TRACKS",
+            "Nothing selected to export."
+            if request.couple_id is None
+            else "Nothing left to export — everything selected is on the couple's never list.",
+        )
 
     stem = _safe_filename(request.name)
     if request.format == "m3u8":
@@ -461,9 +482,13 @@ def export(request: ExportRequest) -> Response:
 @app.post("/api/export/missing")
 def export_missing(request: MissingExportRequest) -> Response:
     """The playlist's tracks that this library doesn't have — a shopping list."""
-    if not request.tracks:
+    tracks = request.tracks
+    if request.couple_id is not None:
+        keys = couples.blocked_keys(request.couple_id)
+        tracks = [t for t in tracks if not couples.is_blocked(t.artist, t.title, keys)]
+    if not tracks:
         raise _error(400, "NO_TRACKS", "Nothing is missing — there's nothing to list.")
-    content = build_missing_txt(request.name, LIBRARY.name, request.tracks)
+    content = build_missing_txt(request.name, LIBRARY.name, tracks)
     stem = _safe_filename(request.name)
     return Response(
         content=content.encode("utf-8"),
@@ -474,8 +499,23 @@ def export_missing(request: MissingExportRequest) -> Response:
     )
 
 
+# Couple intake + guest magic-link routes.
+app.include_router(couples_router)
+
 # When the client has been built (npm run build), serve it so the whole app
 # runs from uvicorn alone. Mounted last so /api routes take precedence.
 DIST = Path(__file__).resolve().parent.parent / "dist"
+
+
+@app.get("/g/{token}")
+def guest_page(token: str) -> Response:
+    """Serve the SPA for magic links; the client reads the token from the URL."""
+    del token
+    index = DIST / "index.html"
+    if not index.is_file():
+        raise _error(503, "NO_BUILD", "Run `npm run build` first (or open the vite dev URL).")
+    return FileResponse(index)
+
+
 if DIST.is_dir():
     app.mount("/", StaticFiles(directory=DIST, html=True), name="static")
