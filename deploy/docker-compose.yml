@@ -1,5 +1,11 @@
 # Lives on the server at $APP_DIR/docker-compose.yml (scp'd there by CI).
 # Values come from the .env file next to it; CI rewrites APP_IMAGE on deploy.
+#
+# Three containers behind one hostname, split the way the repos are:
+#   app    — this repo, the API                        (/api)
+#   dj     — Vikteur/rekord-dj, static nginx           (/)
+#   couple — Vikteur/rekord-couple, static nginx       (/g/, /guest/)
+# The proxy that routes between them is nginx/rekord.conf on the host.
 name: rekordmatch
 
 services:
@@ -24,13 +30,45 @@ services:
       driver: json-file
       options: { max-size: "10m", max-file: "3" }
 
+  # The DJ UI. Stateless: rebuilt and replaced, never migrated.
+  dj:
+    image: ${DJ_IMAGE:-ghcr.io/vikteur/rekord-dj:latest}
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${DJ_PORT:-8081}:80"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/healthz"]
+      interval: 30s
+      timeout: 5s
+      start_period: 5s
+      retries: 3
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  # The couple/friends intake at /g/<token>. Also stateless.
+  couple:
+    image: ${COUPLE_IMAGE:-ghcr.io/vikteur/rekord-couple:latest}
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${COUPLE_PORT:-8082}:80"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/healthz"]
+      interval: 30s
+      timeout: 5s
+      start_period: 5s
+      retries: 3
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
   # Optional TLS terminator. Enable by putting COMPOSE_PROFILES=proxy in .env.
   # Skip it entirely if you already run nginx/Traefik on this box.
   caddy:
     profiles: [proxy]
     image: caddy:2-alpine
     restart: unless-stopped
-    depends_on: [app]
+    depends_on: [app, dj, couple]
     ports:
       - "80:80"
       - "443:443"

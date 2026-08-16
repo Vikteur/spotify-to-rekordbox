@@ -1,20 +1,9 @@
 # syntax=docker/dockerfile:1
 #
-# One image, one process: uvicorn serves the API *and* the built React client
-# (server/main.py mounts ../dist as static files), so there is nothing else to
-# run on the box.
+# The API, and only the API. The two front-ends are their own repos and their
+# own images — Vikteur/rekord-dj and Vikteur/rekord-couple — and the proxy in
+# deploy/nginx/rekord.conf routes /api here and everything else to them.
 
-# --- stage 1: build the client -------------------------------------------
-FROM node:24-alpine AS web
-WORKDIR /build
-COPY package.json package-lock.json ./
-RUN npm ci
-COPY tsconfig.json vite.config.ts ./
-COPY client/ ./client/
-# `npm run build` = tsc --noEmit && vite build -> /build/dist
-RUN npm run build
-
-# --- stage 2: runtime -----------------------------------------------------
 FROM python:3.12-slim AS runtime
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -28,7 +17,6 @@ COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY server/ ./server/
-COPY --from=web /build/dist ./dist
 
 # Docker seeds a fresh named volume from this dir, ownership included, which is
 # what lets the non-root user write library.db.

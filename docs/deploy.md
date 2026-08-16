@@ -1,26 +1,45 @@
 # Deploying to Hetzner
 
-Merge to `main` → GitHub Actions runs the tests, builds one Docker image,
-pushes it to GHCR, SSHes into the Hetzner box and restarts the container there.
-If the new image doesn't answer `/api/health`, the previous one goes back up
+Merge to `main` → GitHub Actions runs the tests, builds the API image, pushes
+it to GHCR, SSHes into the Hetzner box and restarts the containers there. If
+the new image doesn't answer `/api/health`, the previous one goes back up
 automatically and the run fails red.
 
 ```
 merge to main
-  └─ test    pytest (232 tests) + tsc --noEmit + vite build
+  └─ test    pytest (239 tests)
   └─ build   docker build → ghcr.io/vikteur/spotify-to-rekordbox:<sha>
   └─ deploy  scp compose+script → ssh → pull → up -d → health-check
                                                   └─ unhealthy? roll back
 ```
 
+The two front-ends build and push themselves, from their own repos:
+`ghcr.io/vikteur/rekord-dj` and `ghcr.io/vikteur/rekord-couple`. This repo's
+deploy pulls whatever those tags point at, so merging here also picks up a
+front-end that was pushed since the last deploy.
+
 ## What actually runs on the server
 
-**One container.** `server/main.py` mounts the built client (`dist/`) as static
-files, so uvicorn serves the API *and* the React app on port 8000. There is no
-separate web service to deploy.
+**Three containers, one hostname.** Each repo ships one image:
 
-It publishes on `127.0.0.1:8000` only — nothing from the internet reaches it
-except through a reverse proxy on the same box.
+| Service | Image | Serves | Port |
+| --- | --- | --- | --- |
+| `app` | this repo | `/api/*` | `127.0.0.1:8000` |
+| `dj` | Vikteur/rekord-dj | `/` and `/assets/*` | `127.0.0.1:8081` |
+| `couple` | Vikteur/rekord-couple | `/g/*` and `/guest/*` | `127.0.0.1:8082` |
+
+The front-ends are static nginx images — no state, no secrets, nothing to
+migrate. They call `/api` on their own origin, and the proxy sends that to
+`app`, so the browser only ever sees one origin and there is no CORS in play.
+
+All three publish on loopback only — nothing from the internet reaches them
+except through the reverse proxy on the same box, which is the only thing that
+knows the routing (`deploy/nginx/rekord.conf`, or `deploy/Caddyfile` if you use
+the bundled proxy).
+
+Because they share a hostname, the couple app's bundle is built with base
+`/guest/` rather than `/assets/`, so the two asset trees can't collide.
+Changing that means changing the `location` blocks in the proxy config to match.
 
 **State lives in a Docker volume** (`rekordmatch_data` → `/app/data`). That's
 `library.db`: libraries, imported playlists, couples, magic-link tokens.
@@ -144,8 +163,8 @@ Open, no password — a guest on their phone needs these:
 | Path | Why |
 |---|---|
 | `/g/*` | the magic-link page |
+| `/guest/*` | the JS/CSS bundle that page loads |
 | `/api/guest/*` | guest API — the token in the path *is* the auth |
-| `/assets/*` | the JS/CSS bundle the page loads |
 | `/api/health` | uptime monitoring; returns only `{"ok":true}` |
 
 Everything else — the DJ UI, `/api/couples`, `/api/library`, `/api/scan`,
@@ -153,7 +172,8 @@ Everything else — the DJ UI, `/api/couples`, `/api/library`, `/api/scan`,
 password.
 
 `/g/*` also gets `Referrer-Policy: no-referrer`, so a guest tapping through to
-Spotify can't leak their magic link in a `Referer` header.
+Spotify can't leak their magic link in a `Referer` header. The intake container
+sets that header itself as well, so it survives a proxy misconfiguration.
 
 Verified against the real containers: every DJ route 401s unauthenticated,
 every guest route serves, and the password lets the DJ UI through.
@@ -165,9 +185,11 @@ ssh deploy@YOUR_SERVER_IP
 cd /opt/rekordmatch
 
 docker compose ps                  # what's up
-docker compose logs -f app         # tail logs
+docker compose logs -f app         # tail logs (or: dj, couple)
 docker compose restart app         # kick it
 curl localhost:8000/api/health     # {"ok":true}
+curl localhost:8081/healthz        # dj      -> ok
+curl localhost:8082/healthz        # couple  -> ok
 ```
 
 **Roll back by hand** — every deployed sha is still in GHCR:
@@ -175,6 +197,10 @@ curl localhost:8000/api/health     # {"ok":true}
 ```bash
 ./deploy.sh ghcr.io/vikteur/spotify-to-rekordbox:<older-sha>
 ```
+
+To roll back a front-end instead, pin its tag in `.env` (`DJ_IMAGE`,
+`COUPLE_IMAGE`) and `docker compose up -d dj couple`. They default to `:latest`
+and carry no state, so this is always safe.
 
 **Back up the database** — a consistent copy, safe to take while the app is
 running (`.backup` takes SQLite's own lock; a plain `cp` of a live DB can tear):

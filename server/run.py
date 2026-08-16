@@ -5,7 +5,8 @@ squat on it. If one is already there, uvicorn's own failure is easy to miss in
 a scrolling terminal and the browser cheerfully shows you *that* app instead.
 So: check the port first and say plainly what to do.
 
-Set PORT to use a different one:  PORT=8010 npm run dev
+Set PORT to use a different one:  PORT=8010 python -m server.run
+(the front-ends follow with API_URL=http://127.0.0.1:8010 npm run dev)
 """
 
 import os
@@ -35,11 +36,12 @@ def main() -> int:
             f"\nPort {port} is already in use by another program, so this app "
             f"cannot start there.\n"
             f"Whatever you see at http://{HOST}:{port} right now is that other "
-            f"program, not this one\n(the DJ app has no sign-in, so a login "
-            f"page there is not us — only /g/<token> guest links are gated).\n\n"
+            f"program, not this one\n(this is the API — it serves /api and "
+            f"nothing else, so any page there is not us).\n\n"
             f"Either stop it, or run on a different port:\n"
-            f"    PORT={port + 10} npm run dev      # macOS / Linux\n"
-            f"    $env:PORT={port + 10}; npm run dev  # Windows PowerShell\n\n"
+            f"    PORT={port + 10} python -m server.run      # macOS / Linux\n"
+            f"    $env:PORT={port + 10}; python -m server.run  # Windows PowerShell\n\n"
+            f"The front-ends follow with API_URL=http://{HOST}:{port + 10}.\n\n"
             f"To see what is holding the port:\n"
             f"    lsof -i :{port}                  # macOS / Linux\n"
             f"    netstat -ano | findstr :{port}   # Windows\n",

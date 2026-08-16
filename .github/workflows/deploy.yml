@@ -33,18 +33,6 @@ jobs:
       - name: pytest
         run: python -m pytest -q
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "24"
-          cache: npm
-
-      - name: Install node deps
-        run: npm ci
-
-      # tsc --noEmit && vite build — typecheck and client build in one.
-      - name: Build client
-        run: npm run build
-
   build:
     name: Build image
     needs: test

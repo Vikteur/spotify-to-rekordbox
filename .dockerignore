@@ -4,9 +4,8 @@
 .cache/
 .pytest_cache/
 .venv/
-node_modules/
-dist/
 data/
+deploy/
 docs/
 tests/
 scripts/

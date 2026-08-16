@@ -1,5 +1,10 @@
 # Caddy gets a real certificate from Let's Encrypt on first boot, as long as
 # APP_DOMAIN's A record already points at this server and 80/443 are open.
+#
+# One hostname, three containers (see docker-compose.yml):
+#   /api/*          -> app,    this repo's API
+#   /g/*, /guest/*  -> couple, Vikteur/rekord-couple
+#   everything else -> dj,     Vikteur/rekord-dj
 {$APP_DOMAIN} {
 	encode zstd gzip
 
@@ -14,14 +19,14 @@
 	# and /api/couples/{id} hands out both magic-link tokens to anyone who
 	# asks (server/couples_api.py:91).
 	#
-	# These four were open to guests even with the gate on, and stay open:
+	# These were open to guests even with the gate on, and stay open:
 	#
 	#   /g/*          the magic-link page itself
+	#   /guest/*      the JS/CSS bundle that page loads
 	#   /api/guest/*  the guest API — the token in the path was its own auth
-	#   /assets/*     the JS/CSS bundle the page loads
 	#   /api/health   uptime monitoring; returns only {"ok":true}
 	#
-	# @dj not path /g/* /api/guest/* /assets/* /api/health
+	# @dj not path /g/* /guest/* /api/guest/* /api/health
 	#
 	# basic_auth @dj {
 	# 	# Generate the hash with:  docker run --rm caddy:2-alpine caddy hash-password --plaintext 'yourpassword'
@@ -29,7 +34,13 @@
 	# 	{$DJ_USER:dj} {$DJ_PASSWORD_HASH}
 	# }
 
-	reverse_proxy app:8000
+	# Order matters here only in that Caddy routes by matcher specificity;
+	# these three sets of paths do not overlap.
+	@api path /api/*
+	@guest path /g/* /guest/*
+	reverse_proxy @api app:8000
+	reverse_proxy @guest couple:80
+	reverse_proxy dj:80
 
 	header {
 		Strict-Transport-Security "max-age=31536000; includeSubDomains"
@@ -41,8 +52,7 @@
 	# send its own URL onward in a Referer header. Set as two non-overlapping
 	# matchers: two header directives both writing Referrer-Policy would fight,
 	# and the broader one wins.
-	@guest path /g/*
-	@notguest not path /g/*
+	@notguest not path /g/* /guest/*
 	header @guest Referrer-Policy "no-referrer"
 	header @notguest Referrer-Policy "strict-origin-when-cross-origin"
 

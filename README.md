@@ -1,122 +1,190 @@
-# Spotify → rekordbox
+# Spotify → rekordbox — the backend
 
-A small local webapp that turns a **public Spotify playlist** into a **rekordbox playlist built from music files you already own**:
+The API behind Rekord Match: it scans your music, matches Spotify playlists
+against it, keeps the couples intake, and builds the files you import into
+rekordbox. No UI lives here.
 
-1. Name a library (one per device) and load it — **scan a music folder**, **import a rekordbox XML export**, or both
-2. Paste a Spotify playlist link (no Spotify account or API key needed)
-3. It fuzzy-matches each Spotify track against your library; when several versions exist (original + remixes), **you pick one from a dropdown** — and it **remembers that pick** as the song's default for every future playlist
-4. Download a `.m3u8` or rekordbox `.xml` playlist and import it into rekordbox — plus a `.txt` shopping list of everything the playlist wanted that you don't own
+Given a **public Spotify playlist** it produces a **rekordbox playlist built
+from music files you already own**:
 
-Your library is kept in a local SQLite file, so you scan once — not on every launch.
+1. A named library (one per device) is loaded from a **scanned music folder**,
+   an **imported rekordbox XML export**, or both
+2. A Spotify playlist link is fetched (no Spotify account or API key needed)
+3. Each track is fuzzy-matched against the library; when several versions exist
+   (original + remixes) the DJ picks one, and the pick is **remembered** as
+   that song's default for every future playlist
+4. It exports a `.m3u8` or rekordbox `.xml` playlist, plus a `.txt` shopping
+   list of everything the playlist wanted but the library doesn't have
 
-Everything runs on your machine. Nothing is uploaded anywhere.
+The library is kept in a local SQLite file, so you scan once — not on every
+launch.
 
-![Screenshot](docs/screenshot.png)
+## The three repos
+
+| Repo | What it holds |
+| --- | --- |
+| `spotify-to-rekordbox` (this one) | The backend: FastAPI, the matcher, the SQLite library, and the deployment topology for all three |
+| [`rekord-dj`](https://github.com/Vikteur/rekord-dj) | The DJ app — library, matching, exports, and the couples panel |
+| [`rekord-couple`](https://github.com/Vikteur/rekord-couple) | The couple/friends intake SPA at `/g/<token>` |
+
+The front-ends call `/api` on their own origin; the proxy routes that here, so
+there is no CORS anywhere in the stack. Nothing in this repo serves HTML.
 
 ## Prerequisites
 
 - Python ≥ 3.11
-- Node ≥ 20
 - rekordbox (5/6/7) to import the result
 - A **public** Spotify playlist URL (or any tracklist as text)
 
 ## Setup
 
 ```bash
-# Python backend
 python3 -m venv .venv
 source .venv/bin/activate        # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-
-# Frontend
-npm install
 ```
 
 ## Run
 
 ```bash
-npm run dev        # dev mode → open http://localhost:5173
+python -m server.run             # http://127.0.0.1:8000
+python -m server.run --reload    # reload on edit
 ```
 
-or, closer to "production":
+Then start whichever front-end you're working on, in its own checkout; its dev
+server proxies `/api` back here. `PORT=8010 python -m server.run` moves the API,
+and the front-ends follow with `API_URL=http://127.0.0.1:8010 npm run dev`.
 
-```bash
-npm run build
-npm start          # → open http://127.0.0.1:8000
-```
+The server binds to `127.0.0.1` only — it can read your local folders, so never
+expose it on a network without a proxy in front.
 
-Both need the venv active (the server runs via `python -m ...`). The server binds to `127.0.0.1` only — it can read your local folders, so never expose it on a network.
+**There is no login.** No account, no sign-in, no Spotify authentication. The
+only credential in the system is a magic-link token, and that is what a *guest*
+gets, not something the DJ needs.
 
-**The DJ app has no login.** No account, no sign-in, no Spotify authentication — open `/` and you are straight in. The only gated route is `/g/<token>`, the magic link you hand to a couple or their guests for the wedding intake; a token there is what a guest gets, not something you need.
-
-> ⚠️ **Auth is switched off on this branch, on purpose and temporarily.** The magic-link checks are bypassed (`AUTH_DISABLED`, `server/couples_api.py`) and the proxy password is commented out in `deploy/Caddyfile` and `deploy/nginx/rekord.conf`. Deployed as-is, the DJ side is public — including `/api/couples`, which hands every couple's magic link to any caller, and `/api/scan`, which reads folders on the server. To put it back: set `AUTH_DISABLED=0` and un-comment the two `basic_auth` blocks.
-
-So if `/` asks you to sign in, you are looking at a *different program*. The usual cause is something else already sitting on port 8000 (Docker dashboards, other dev servers and admin panels all like that port), so your browser shows you *its* page instead. The app now refuses to start in that case and says so; to move it out of the way:
-
-```bash
-PORT=8010 npm run dev          # macOS / Linux
-$env:PORT=8010; npm run dev    # Windows PowerShell
-```
-
-Both halves follow `PORT`. To see what's holding it: `lsof -i :8000` (macOS/Linux) or `netstat -ano | findstr :8000` (Windows).
+> ⚠️ **Auth is switched off on this branch, on purpose and temporarily.** The
+> magic-link checks are bypassed (`AUTH_DISABLED`, `server/couples_api.py`) and
+> the proxy password is commented out in `deploy/Caddyfile` and
+> `deploy/nginx/rekord.conf`. Deployed as-is, the DJ side is public — including
+> `/api/couples`, which hands every couple's magic link to any caller, and
+> `/api/scan`, which reads folders on the server. To put it back: set
+> `AUTH_DISABLED=0` and un-comment the two `basic_auth` blocks.
 
 ## Your libraries
 
-Music is organised into **named libraries** — normally one per device ("MacBook", "Studio PC", "USB drive"). You name a library before putting anything in it, and the picker at the top of section 1 chooses which one a playlist is matched against.
+Music is organised into **named libraries** — normally one per device
+("MacBook", "Studio PC", "USB drive"). Everything is stored in
+`data/library.db` (SQLite) and reloaded at startup, so **restarting the app
+never costs you a rescan**, and the library you had selected is still selected.
 
-Everything is stored in `data/library.db` (SQLite) and reloaded at startup, so **restarting the app never costs you a rescan**, and the library you had selected is still selected.
+Libraries are fully independent: their tracks, their sources, and their
+remembered version choices. That last one matters — the same song resolves to a
+different file on each device, so a single shared list of choices would have
+your devices overwriting each other. Deleting a library removes its scanned data
+and choices; it never touches your music files.
 
-Libraries are fully independent: their tracks, their sources, and their remembered version choices. That last one matters — the same song resolves to a different file on each device, so a single shared list of choices would have your devices overwriting each other. Deleting a library removes its scanned data and choices; it never touches your music files.
+Each library is built from one or more sources — a scanned folder, an imported
+rekordbox XML, or several of each, merged and deduplicated by file path:
 
-Each library is built from one or more sources — a scanned folder, an imported rekordbox XML, or several of each, merged and deduplicated by file path:
+**Scan a folder.** Reads tags (and filenames, for untagged files) from every
+audio file underneath, **including BPM and musical key when they are written
+into the file** — rekordbox and Serato store key in ID3 `TKEY`, Mixed In Key
+uses `TXXX:INITIALKEY`, and BPM lives in `TBPM` (MP4 `tmpo`, Vorbis `BPM` for
+m4a/FLAC). Nonsense values (`0`, unparseable, out of a 20–300 range) are ignored
+rather than stored. The first pass over a big folder takes a while; afterwards
+each file is re-read only when its size or modification time changed, so repeat
+scans take seconds. **Force rescan** ignores that and re-reads everything.
 
-**Scan a folder.** Reads tags (and filenames, for untagged files) from every audio file underneath, **including BPM and musical key when they are written into the file** — rekordbox and Serato store key in ID3 `TKEY`, Mixed In Key uses `TXXX:INITIALKEY`, and BPM lives in `TBPM` (MP4 `tmpo`, Vorbis `BPM` for m4a/FLAC). Nonsense values (`0`, unparseable, out of a 20–300 range) are ignored rather than stored. The first pass over a big folder takes a while; afterwards each file is re-read only when its size or modification time changed, so repeat scans take seconds. **Force rescan** ignores that and re-reads everything.
+**Import a rekordbox XML export.** In rekordbox: `File › Export Collection in
+xml format`. This is often the better source:
 
-**Import a rekordbox XML export.** In rekordbox: `File › Export Collection in xml format`, then pick that file in the app. This is often the better source:
-
-- it covers tracks on drives that aren't plugged in right now (you'll be told how many are currently missing — they still match, and rekordbox will find them once the drive is connected)
-- it carries rekordbox's own analysed BPM and key, which beat whatever a tagger wrote into the file (and a later folder rescan will not take that back)
+- it covers tracks on drives that aren't plugged in right now (you'll be told
+  how many are currently missing — they still match, and rekordbox will find
+  them once the drive is connected)
+- it carries rekordbox's own analysed BPM and key, which beat whatever a tagger
+  wrote into the file (and a later folder rescan will not take that back)
 - it's near-instant, no matter how big the collection is
-- rekordbox sometimes stores the version in a separate `Mix` field; that gets folded back into the title so the remix picker still works
-
-Each loaded source is listed with its track count and can be removed independently.
+- rekordbox sometimes stores the version in a separate `Mix` field; that gets
+  folded back into the title so the remix picker still works
 
 ## Most-played playlists
 
-Upload rekordbox playlists — "Most played 2026", "Last month", "All time" — per library, and the app uses them to work out which version of a song you actually play. In rekordbox: right-click the playlist › Export. Any of **m3u8, m3u, pls, txt or xml** works; m3u8 is the most reliable because it carries file paths, while the TXT export has none and is resolved by artist and title instead (at a stricter threshold, since a wrong resolution here would quietly promote the wrong version later). Re-uploading a playlist of the same name replaces it.
+Upload rekordbox playlist exports — "Most played 2026", "Last month", "All
+time" — per library, and the matcher uses them to work out which version of a
+song you actually play. In rekordbox: right-click the playlist › Export. Any of
+**m3u8, m3u, pls, txt or xml** works; m3u8 is the most reliable because it
+carries file paths, while the TXT export has none and is resolved by artist and
+title instead (at a stricter threshold, since a wrong resolution here would
+quietly promote the wrong version later). Re-uploading a playlist of the same
+name replaces it.
 
 They do two things:
 
-**Ranking, always.** A file that's in one of your playlists is offered first and marked `★` in the picker, and being in several ranks higher still. This is deliberately a nudge, not a veto: it settles a close call between two versions but never outweighs a version or artist mismatch, so playing the radio edit constantly won't make it stand in for the original a playlist asked for. Where two candidates would otherwise be too close to call, membership is enough to settle it into an automatic pick.
+**Ranking, always.** A file that's in one of your playlists is offered first and
+marked `★`, and being in several ranks higher still. This is deliberately a
+nudge, not a veto: it settles a close call between two versions but never
+outweighs a version or artist mismatch, so playing the radio edit constantly
+won't make it stand in for the original a playlist asked for.
 
-Click a playlist row to fold it open and see exactly what it contains, in the order it was exported, with each track's duration, BPM and key.
+**Filtering, on demand.** Matching can be narrowed to a single playlist —
+"which of this Spotify playlist do I have in my 2026 most-played" — with
+everything outside it reported as not found. A file that appears in several
+sources is stored once but claimed by each, so removing one source only drops
+the tracks nothing else claims — and a folder rescan never blanks the BPM and
+key that came from rekordbox, since a scan can't observe those.
 
-**Filtering, on demand.** The dropdown next to *Match against library* can narrow matching to a single playlist — "which of this Spotify playlist do I have in my 2026 most-played" — with everything outside it reported as not found. A file that appears in several sources is stored once but claimed by each, so removing one source only drops the tracks nothing else claims — and a folder rescan never blanks the BPM and key that came from rekordbox, since a scan can't observe those.
-
-## Usage notes
+## Matching notes
 
 - **Files without tags** are matched by filename (`Artist - Title.mp3` patterns).
-- **iTunes / Apple Music**: iTunes songs are `.m4a` files and fully supported (AAC and Apple Lossless). Typical folders: macOS `~/Music/Music/Media.localized/` (older: `~/Music/iTunes/iTunes Media/Music/`), Windows `C:\Users\<you>\Music\iTunes\iTunes Media\Music\`. **`.m4p` files** (pre-2010 iTunes purchases and Apple Music *subscription* downloads) are DRM-locked — rekordbox can't play them, so the scanner counts and reports them instead of matching them.
-- **Playlists over ~100 tracks**: Spotify's public embed data stops around 100 tracks. The app warns you when this happens — paste the full tracklist as text instead (in Spotify select all tracks, or use any text list with one `Artist - Title` per line).
-- **Matching**: green *auto* rows are confident matches (still overridable); amber *pick one* rows have several plausible files — that's the remix picker; *no match* rows list weak guesses if any. The dropdown shows each candidate's version (`[x remix]`, `[extended]`…), duration difference vs Spotify, format/bitrate, and score.
-- **Remembered versions**: when you pick a version for a song, that file becomes the song's default in every future playlist — those rows come back pre-selected with a purple *remembered* chip. The dropdown still lists the alternatives, and choosing a different one overwrites the default. Section 1 lists everything you've taught it, with **Forget** per entry and **Forget all**.
-
-  The choice is keyed on artist + core title + version, so it survives whichever way you load the playlist (Spotify link or pasted text), and different versions stay independent: teaching it your favourite *Strobe* says nothing about *Strobe (Radio Edit)*. Featured artists are ignored in that key, because playlists list them inconsistently. Choices also survive removing a library source — if the file comes back, so does the preference. They are **per library**, so each device learns its own.
+- **iTunes / Apple Music**: iTunes songs are `.m4a` files and fully supported
+  (AAC and Apple Lossless). Typical folders: macOS
+  `~/Music/Music/Media.localized/` (older: `~/Music/iTunes/iTunes Media/Music/`),
+  Windows `C:\Users\<you>\Music\iTunes\iTunes Media\Music\`. **`.m4p` files**
+  (pre-2010 iTunes purchases and Apple Music *subscription* downloads) are
+  DRM-locked — rekordbox can't play them, so the scanner counts and reports them
+  instead of matching them.
+- **Playlists over ~100 tracks**: Spotify's public embed data stops around 100
+  tracks. The API says so, and the paste-a-tracklist fallback has no cap.
+- **Remembered versions** are keyed on artist + core title + version, so a
+  choice survives whichever way the playlist was loaded (Spotify link or pasted
+  text), and different versions stay independent: teaching it your favourite
+  *Strobe* says nothing about *Strobe (Radio Edit)*. Featured artists are ignored
+  in that key, because playlists list them inconsistently. Choices also survive
+  removing a library source — if the file comes back, so does the preference.
+  They are **per library**, so each device learns its own.
 
 ## Wedding couples (guest intake)
 
-For wedding gigs the app carries one record per couple. **COUPLES › New** in the sidebar creates it (names + wedding date) and issues two **magic links**:
+The API carries one record per couple, created with names + wedding date, which
+issues two **magic links**:
 
-- **Couple link** — the full eight-page intake: welcome, opening dance (with start preference and a note to you), second & third song, their top 20, a reveal page, the friends' top 20, the never list, and the finale (up to five must-plays, a "how we party" briefing, pasted playlist links).
-- **Friends link** — one shared link, scoped to the friends' top 20 only. Friends see each other's picks and fill the 20 spots together, but can't remove or reorder anything — and they see nothing else of the couple's answers.
+- **Couple link** — the full eight-page intake: welcome, opening dance (with
+  start preference and a note to the DJ), second & third song, their top 20, a
+  reveal page, the friends' top 20, the never list, and the finale (up to five
+  must-plays, a "how we party" briefing, pasted playlist links).
+- **Friends link** — one shared link, scoped to the friends' top 20 only.
+  Friends see each other's picks and fill the 20 spots together, but can't
+  remove or reorder anything — and they see nothing else of the couple's answers.
 
-Every answer autosaves instantly (idempotent writes, retried on flaky connections, flushed when the tab closes), so the couple can stop mid-page at your first meeting and finish from their couch. Links stop working the day after the wedding and can be **revoked** or **rotated** (new link, old one dies) from the couple's panel at any time.
+Writes are idempotent so the intake app can retry on a flaky connection and
+flush on tab close. Links stop working the day after the wedding and can be
+**revoked** or **rotated** (new link, old one dies) at any time.
 
-Their answers stream into your side live. Each chapter is a list under the couple — **Load & match** drops it into the normal match table, so matching against your library and exporting to rekordbox works exactly like any playlist. The **never list is a blocklist**: its songs (every version of them) are stripped from every export for that couple, server-side. The change log shows where each song came from (couple vs friends link).
+The **never list is a blocklist**: its songs (every version of them) are
+stripped from every export for that couple, server-side. The change log records
+which link each song came from (couple vs friends).
+
+The UI for all of this is in the other two repos: `rekord-dj` has the DJ panel,
+`rekord-couple` is what the guests open.
 
 ### Spotify song search for guests
 
-The song fields in the intake are typeahead searches backed by Spotify's official API via a **server-side proxy** — the secret never reaches a browser, guests are rate-limited, repeated queries are cached, and only **metadata** (title, artist, duration, ISRC, artwork URL) is ever fetched — no audio, ever. Create a (free) app at <https://developer.spotify.com/dashboard> and provide its credentials either as environment variables:
+The song fields in the intake are typeahead searches backed by Spotify's
+official API via a **server-side proxy** — the secret never reaches a browser,
+guests are rate-limited, repeated queries are cached, and only **metadata**
+(title, artist, duration, ISRC, artwork URL) is ever fetched — no audio, ever.
+Create a (free) app at <https://developer.spotify.com/dashboard> and provide its
+credentials either as environment variables:
 
 ```bash
 SPOTIFY_CLIENT_ID=...      SPOTIFY_CLIENT_SECRET=...
@@ -128,53 +196,74 @@ or in `data/spotify_credentials.json`:
 { "client_id": "...", "client_secret": "..." }
 ```
 
-Without credentials the intake still works — song fields simply save whatever guests type, flagged "as typed", and you resolve them at matching time. Songs not on Spotify always have that same free-text fallback.
-
-Guests reach the app at `http://<your-host>/g/<token>`, served by the same server (`npm run build` + `npm start`). The server binds to `127.0.0.1` by default; to let a couple answer from home you need to expose it deliberately (a tunnel like `cloudflared`/`ngrok`, or a small VPS) — the magic-link tokens are the only access control, so use HTTPS.
-
-```bash
-node scripts/couple-intake-check.mjs   # end-to-end check: walks the whole intake in a real browser
-```
+Without credentials the intake still works — song fields simply save whatever
+guests type, flagged "as typed", and the DJ resolves them at matching time.
+Songs not on Spotify always have that same free-text fallback.
 
 ## Importing into rekordbox
 
-**M3U8 (recommended):** rekordbox → `File › Import › Import Playlist` → pick the downloaded `.m3u8`. Tracks already in your collection are matched by file path (cues/grids untouched); new files are added and analyzed.
+**M3U8 (recommended):** rekordbox → `File › Import › Import Playlist` → pick the
+downloaded `.m3u8`. Tracks already in your collection are matched by file path
+(cues/grids untouched); new files are added and analyzed.
 
-**Missing tracks (.txt):** not for rekordbox — a shopping list of the playlist's tracks that aren't in the selected library. Plain `Artist - Title` lines so it pastes straight into a shop's search box (or back into this app's paste-a-tracklist box once you've bought them), with a couple of `#` comment lines for context. Tracks nothing matched are listed under *Not found*; ones that had a real match you passed on are listed separately under *Skipped*, so the buy-list stays honest.
+**Missing tracks (.txt):** not for rekordbox — a shopping list of the playlist's
+tracks that aren't in the selected library. Plain `Artist - Title` lines so it
+pastes straight into a shop's search box, with a couple of `#` comment lines for
+context. Tracks nothing matched are listed under *Not found*; ones that had a
+real match the DJ passed on are listed separately under *Skipped*, so the
+buy-list stays honest.
 
-**rekordbox XML:** `Preferences › Advanced › Database › rekordbox xml` → browse to the downloaded `.rekordbox.xml`. Show the xml pane via `Preferences › View › Layout › rekordbox xml`. In the tree's *rekordbox xml* section, right-click the playlist → `Import Playlist`.
+**rekordbox XML:** `Preferences › Advanced › Database › rekordbox xml` → browse
+to the downloaded `.rekordbox.xml`. Show the xml pane via `Preferences › View ›
+Layout › rekordbox xml`. In the tree's *rekordbox xml* section, right-click the
+playlist → `Import Playlist`.
 
 ## Checking the Spotify fetch
 
-The playlist fetch uses Spotify's public embed page (the same trick "no sign-in" converter sites use) because Spotify's official API stopped allowing anonymous metadata access in 2026. Verify it works from your machine:
+The playlist fetch uses Spotify's public embed page (the same trick "no sign-in"
+converter sites use) because Spotify's official API stopped allowing anonymous
+metadata access in 2026. Verify it works from your machine:
 
 ```bash
 python scripts/probe_spotify.py "https://open.spotify.com/playlist/<id>"
 ```
 
-`OK` + a track list means you're good. If Spotify changes their page format some day, the app tells you and the paste-text fallback always keeps working (plan B for developers: swap `server/spotify/` for the `spotifyscraper` PyPI package behind the same interface).
+`OK` + a track list means you're good. If Spotify changes their page format some
+day, the app says so and the paste-text fallback always keeps working (plan B
+for developers: swap `server/spotify/` for the `spotifyscraper` PyPI package
+behind the same interface).
 
 ## Limitations (POC)
 
-- Public playlists only (no Spotify login) — make a private playlist public for a minute, or paste it as text
-- Embed data caps at ~100 tracks (warned in-app; text paste has no cap)
+- Public playlists only (no Spotify login) — make a private playlist public for
+  a minute, or paste it as text
+- Embed data caps at ~100 tracks (reported by the API; text paste has no cap)
 - Matching is metadata-only (tags/filenames/duration) — no audio fingerprinting
-- The app reads your rekordbox collection but never writes to it; playlists come back as files you import
+- The app reads your rekordbox collection but never writes to it; playlists come
+  back as files you import
+- `POST /api/scan` walks a **local** folder, so the scan/match half only makes
+  sense where the music is. What genuinely belongs on a server is the couples
+  intake, which is meant to be reached from someone else's phone.
 
 ## Troubleshooting
 
-- **Folder not found**: quotes and trailing slashes are trimmed automatically; check the path and permissions. `~` works.
-- **Wrong matches after retagging**: hit **Force rescan**, or re-import a fresh XML export.
-- **Library looks stale**: re-import the XML (same filename replaces the old import) or rescan the folder.
-- **Accents look wrong after M3U8 import on Windows**: tell me — adding a UTF-8 BOM to the export is a one-line change.
+- **Folder not found**: quotes and trailing slashes are trimmed automatically;
+  check the path and permissions. `~` works.
+- **Wrong matches after retagging**: force a rescan, or re-import a fresh XML
+  export.
+- **Library looks stale**: re-import the XML (same filename replaces the old
+  import) or rescan the folder.
 - **Reset everything**: delete the `data/` folder.
 
 ## Development
 
 ```bash
-.venv/bin/pytest           # parsers, scanner, database, libraries, playlists, matcher calibration, preferences, exports, API
-npm run typecheck          # strict TS on the client
-node scripts/screenshot.mjs <music-folder>   # regenerate docs/screenshot.png (app must be running)
+.venv/bin/pytest    # parsers, scanner, database, libraries, playlists,
+                    # matcher calibration, preferences, exports, API
 ```
 
-The matching thresholds live in `server/matcher/score.py`; `tests/test_matcher.py` is the calibration harness — tune, run, repeat.
+The matching thresholds live in `server/matcher/score.py`;
+`tests/test_matcher.py` is the calibration harness — tune, run, repeat.
+
+Deployment for all three repos is driven from `deploy/` here — see
+[docs/deploy.md](docs/deploy.md).

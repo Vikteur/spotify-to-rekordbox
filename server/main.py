@@ -4,8 +4,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, Response
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import Response
 from pydantic import BaseModel
 
 from server import couples, db
@@ -525,20 +524,7 @@ def export_missing(request: MissingExportRequest) -> Response:
 # Couple intake + guest magic-link routes.
 app.include_router(couples_router)
 
-# When the client has been built (npm run build), serve it so the whole app
-# runs from uvicorn alone. Mounted last so /api routes take precedence.
-DIST = Path(__file__).resolve().parent.parent / "dist"
-
-
-@app.get("/g/{token}")
-def guest_page(token: str) -> Response:
-    """Serve the SPA for magic links; the client reads the token from the URL."""
-    del token
-    index = DIST / "index.html"
-    if not index.is_file():
-        raise _error(503, "NO_BUILD", "Run `npm run build` first (or open the vite dev URL).")
-    return FileResponse(index)
-
-
-if DIST.is_dir():
-    app.mount("/", StaticFiles(directory=DIST, html=True), name="static")
+# This app is the API and nothing else. The two front-ends are their own
+# repos and their own containers — Vikteur/rekord-dj serves "/" and
+# Vikteur/rekord-couple serves the /g/<token> magic links — and the proxy in
+# deploy/nginx/rekord.conf routes /api here.
