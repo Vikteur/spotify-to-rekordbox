@@ -1195,3 +1195,21 @@ textarea {
 .list-summary .btn {
   flex: none;
 }
+
+/* Expandable "what got skipped" lists under a scan summary. */
+.skipped-list {
+  margin-top: 0.25rem;
+  font-size: 0.85rem;
+}
+.skipped-list > summary {
+  cursor: pointer;
+}
+.skipped-list ul {
+  margin: 0.25rem 0 0;
+  padding-left: 1.25rem;
+  max-height: 14rem;
+  overflow-y: auto;
+}
+.skipped-list li {
+  overflow-wrap: anywhere;
+}

@@ -43,6 +43,20 @@ def test_first_scan_finds_everything(library: Path) -> None:
     assert len(LIBRARY.by_id) == 6
 
 
+def test_skipped_files_are_named_not_just_counted(library: Path) -> None:
+    """"75 DRM files skipped" is useless without knowing which ones."""
+    status = scan(library).status()
+
+    drm = status["scanned"]["skipped_drm_files"]
+    assert status["scanned"]["skipped_drm"] == len(drm) == 1
+    assert drm[0].endswith("old-purchase.m4p")
+
+    # Unreadable files say which file and why.
+    unreadable = [error for error in status["errors"] if "corrupt" in error["file"]]
+    assert len(unreadable) == 1
+    assert unreadable[0]["message"], "an unreadable file must explain itself"
+
+
 def test_second_scan_is_all_cache(library: Path) -> None:
     scan(library)
     scanner = scan(library)

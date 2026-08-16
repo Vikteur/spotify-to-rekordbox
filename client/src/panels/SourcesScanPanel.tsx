@@ -114,16 +114,51 @@ export function SourcesScanPanel() {
         )}
         {scan?.state === 'error' && <p className="error">Scan failed: {scan.message}</p>}
         {scanned && (
-          <p className="muted">
-            Scanned {scanned.track_count.toLocaleString()} files in {(scanned.scan_ms / 1000).toFixed(1)}s
-            {scanned.from_cache > 0 && ` (${scanned.from_cache.toLocaleString()} unchanged)`}
+          <>
+            <p className="muted">
+              Scanned {scanned.track_count.toLocaleString()} files in {(scanned.scan_ms / 1000).toFixed(1)}s
+              {scanned.from_cache > 0 && ` (${scanned.from_cache.toLocaleString()} unchanged)`}
+            </p>
             {scanned.skipped_drm > 0 && (
-              <span className="warn"> — {scanned.skipped_drm} DRM-protected file(s) skipped (rekordbox can't play .m4p)</span>
+              <details className="skipped-list">
+                <summary className="warn">
+                  {scanned.skipped_drm} DRM-protected file(s) skipped — rekordbox can't play .m4p
+                </summary>
+                <p className="muted">
+                  Apple Music subscription downloads and iTunes purchases from before 2010.
+                  They are locked to your Apple account, so no DJ software can open them —
+                  the only fix is owning the track outright.
+                </p>
+                <ul>
+                  {(scanned.skipped_drm_files ?? []).map((path) => (
+                    <li key={path} title={path}>{path}</li>
+                  ))}
+                </ul>
+                {scanned.skipped_drm > (scanned.skipped_drm_files?.length ?? 0) && (
+                  <p className="muted">
+                    …and {scanned.skipped_drm - (scanned.skipped_drm_files?.length ?? 0)} more.
+                  </p>
+                )}
+              </details>
             )}
             {scan?.errors && scan.errors.length > 0 && (
-              <span className="warn"> — {scan.errors.length} unreadable file(s)</span>
+              <details className="skipped-list">
+                <summary className="warn">{scan.errors.length} file(s) could not be read</summary>
+                <p className="muted">
+                  Corrupt or truncated, not really audio despite the extension, or a folder
+                  that could not be opened. Each line says why.
+                </p>
+                <ul>
+                  {scan.errors.map((entry, index) => (
+                    <li key={`${entry.file}-${index}`} title={entry.message}>
+                      {entry.file || entry.message}
+                      {entry.file && <span className="muted"> — {entry.message}</span>}
+                    </li>
+                  ))}
+                </ul>
+              </details>
             )}
-          </p>
+          </>
         )}
       </section>
 

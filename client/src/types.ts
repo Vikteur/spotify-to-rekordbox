@@ -48,6 +48,7 @@ export interface ScanReport {
   track_count: number;
   from_cache: number;
   skipped_drm: number;
+  skipped_drm_files?: string[];   // capped list, for showing which ones
   scan_ms: number;
   scanned_at: string;
 }

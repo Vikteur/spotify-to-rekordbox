@@ -11,6 +11,7 @@ from server.scanner.tags import read_track
 from server.scanner.walk import walk_library
 
 PARSE_WORKERS = 8
+LISTED_FILES = 200   # how many skipped paths to hand back for display
 
 
 class ScanInProgress(Exception):
@@ -64,9 +65,9 @@ class Scanner:
     def _run(self, library_id: int, folder: str, force: bool) -> None:
         started = time.monotonic()
         try:
-            files, drm_count, walk_errors = walk_library(Path(folder))
+            files, drm_files, walk_errors = walk_library(Path(folder))
             errors = [{"file": "", "message": message} for message in walk_errors]
-            self._set(found=len(files), skipped_drm=drm_count, errors=errors)
+            self._set(found=len(files), skipped_drm=len(drm_files), errors=errors)
 
             source_id = db.upsert_source(library_id, "folder", folder)
             known = {} if force else db.source_tracks(source_id)
@@ -105,7 +106,10 @@ class Scanner:
                     "folder": folder,
                     "track_count": len(tracks),
                     "from_cache": from_cache,
-                    "skipped_drm": drm_count,
+                    "skipped_drm": len(drm_files),
+                    # Capped: a library can hold thousands of these and the
+                    # list is only there to be read.
+                    "skipped_drm_files": [str(path) for path in drm_files[:LISTED_FILES]],
                     "scan_ms": round((time.monotonic() - started) * 1000),
                     "scanned_at": datetime.now(timezone.utc).isoformat(),
                 },
