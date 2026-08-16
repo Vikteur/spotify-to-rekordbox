@@ -8,8 +8,11 @@ import {
 } from 'react';
 import { ApiError, api, downloadExport, downloadMissing, parseTextPlaylist } from './api';
 import type {
+  CoupleDetail,
+  CoupleSummary,
   LibrarySummary,
   LibraryTrack,
+  ListKind,
   MatchResult,
   Playlist,
   PlaylistInfo,
@@ -67,12 +70,19 @@ function useAppStore() {
   const [name, setName] = useState('');
   const [exportError, setExportError] = useState('');
 
+  // --- Section 5: wedding couples ---
+  const [couples, setCouples] = useState<CoupleSummary[]>([]);
+  // Set while the loaded playlist came from a couple chapter: exports then
+  // pass couple_id so the server drops everything on their never list.
+  const [activeCouple, setActiveCouple] = useState<{ id: number; names: string } | null>(null);
+
   useEffect(() => {
     // The library is restored from the database, so a reload needs no rescan.
     api.library().then(setLib).catch(() => undefined);
     api.scanStatus().then(setScan).catch(() => undefined);
     api.preferences().then((r) => setPrefs(r.preferences)).catch(() => undefined);
     api.playlists().then((r) => setPlaylists(r.playlists)).catch(() => undefined);
+    api.couples().then((r) => setCouples(r.couples ?? [])).catch(() => undefined);
   }, []);
 
   useScanPolling(scan, setScan, setLib);
@@ -232,6 +242,7 @@ function useAppStore() {
     setPlaylistNote('');
     setResults(null);
     setSelections({});
+    setActiveCouple(null);
     try {
       const fetched = await api.fetchPlaylist(url);
       setPlaylist(fetched);
@@ -247,6 +258,7 @@ function useAppStore() {
     setPlaylistError('');
     setResults(null);
     setSelections({});
+    setActiveCouple(null);
     const { tracks, unsplit } = parseTextPlaylist(pasted);
     if (!tracks.length) {
       setPlaylistError('Nothing to parse — paste one "Artist - Title" per line.');
@@ -258,6 +270,60 @@ function useAppStore() {
       unsplit.length
         ? `${tracks.length} tracks parsed — ${unsplit.length} line(s) had no "Artist - Title" separator and will match on title alone.`
         : `${tracks.length} tracks parsed.`,
+    );
+  }
+
+  async function refreshCouples() {
+    try {
+      setCouples((await api.couples()).couples);
+    } catch {
+      // sidebar counts only — the panel surfaces real errors
+    }
+  }
+
+  /**
+   * Load one chapter of a couple's answers as the playlist to match. Songs on
+   * their never list are dropped up front; the export re-checks server-side,
+   * so a blocked song can't sneak out even via manual picks.
+   */
+  function loadCoupleChapter(detail: CoupleDetail, kind: ListKind, label: string) {
+    const entries = detail.lists[kind] ?? [];
+    const blockedIds = new Set(
+      detail.blocklist.map((block) => block.spotify_id).filter(Boolean),
+    );
+    const blockedNames = new Set(
+      detail.blocklist.map((block) =>
+        `${block.artist}|${block.title}`.trim().toLowerCase(),
+      ),
+    );
+    const kept = entries.filter(
+      (entry) =>
+        !(entry.spotify_id && blockedIds.has(entry.spotify_id)) &&
+        !blockedNames.has(`${entry.artist}|${entry.title}`.trim().toLowerCase()),
+    );
+    const excluded = entries.length - kept.length;
+    const playlistName = `${detail.names} — ${label}`;
+    setPlaylistError('');
+    setResults(null);
+    setSelections({});
+    setPlaylist({
+      name: playlistName,
+      owner_name: detail.names,
+      total: kept.length,
+      truncated: false,
+      tracks: kept.map((entry, index) => ({
+        index,
+        artist: entry.artist,
+        title: entry.title,
+        duration_sec: entry.duration_ms != null ? entry.duration_ms / 1000 : null,
+      })),
+    });
+    setName(playlistName);
+    setActiveCouple({ id: detail.id, names: detail.names });
+    setPlaylistNote(
+      `Loaded ${label.toLowerCase()} from ${detail.names} — ${kept.length} song${
+        kept.length === 1 ? '' : 's'
+      }.${excluded ? ` ${excluded} excluded by their never list.` : ''}`,
     );
   }
 
@@ -282,10 +348,26 @@ function useAppStore() {
     }
   }
 
-  /** A deliberate pick becomes this song's default for every future playlist. */
-  async function chooseVersion(result: MatchResult, value: string) {
+  /**
+   * Point a row at a file. With `remember` (the default), the pick also becomes
+   * this song's saved default for every future playlist; "Use once" passes
+   * `false` so a one-off choice — or just previewing a candidate — doesn't
+   * write a preference.
+   */
+  async function chooseVersion(result: MatchResult, value: string, remember = true) {
     setSelections((previous) => ({ ...previous, [result.input.index]: value }));
     if (!value || value === SKIP) return;
+    if (!remember) {
+      // A one-off pick reads as "your pick", not "remembered": drop any
+      // remembered flag we may have set on this row earlier.
+      setRemembered((previous) => {
+        if (!previous[result.input.index]) return previous;
+        const next = { ...previous };
+        delete next[result.input.index];
+        return next;
+      });
+      return;
+    }
     try {
       const { preferences } = await api.rememberChoice(
         result.input.artist,
@@ -298,6 +380,34 @@ function useAppStore() {
       // Remembering is a convenience — never block the export on it, but say so
       // once so the user isn't left wondering why the choice didn't stick.
       setRememberNote("Couldn't save that as a remembered version — your pick still exports fine.");
+    }
+  }
+
+  /**
+   * Undo a row's pick or skip: restore what the match run suggested (the auto
+   * pick, "pick one", or skip for no-candidate rows). If the pick was
+   * remembered in this session, the saved preference is removed again too.
+   */
+  async function resetChoice(result: MatchResult) {
+    const index = result.input.index;
+    const preset = result.auto_selected_id ?? (result.candidates.length ? '' : SKIP);
+    setSelections((previous) => ({ ...previous, [index]: preset }));
+    if (!remembered[index]) return;
+    setRemembered((previous) => {
+      const next = { ...previous };
+      delete next[index];
+      return next;
+    });
+    const norm = (value: string) => value.trim().toLowerCase();
+    const pref = prefs.find(
+      (p) => norm(p.artist) === norm(result.input.artist) && norm(p.title) === norm(result.input.title),
+    );
+    if (!pref) return;
+    try {
+      const { preferences } = await api.forgetChoice(pref.id);
+      setPrefs(preferences);
+    } catch {
+      setRememberNote("Couldn't remove the remembered version — you can forget it from the Remembered panel.");
     }
   }
 
@@ -350,7 +460,7 @@ function useAppStore() {
   async function runExport(format: 'm3u8' | 'xml') {
     setExportError('');
     try {
-      await downloadExport(name, format, chosenIds);
+      await downloadExport(name, format, chosenIds, activeCouple?.id ?? null);
     } catch (error) {
       setExportError(message(error));
     }
@@ -368,6 +478,7 @@ function useAppStore() {
           // only a real match you passed on counts as skipped.
           had_candidates: result.bucket !== 'unmatched',
         })),
+        activeCouple?.id ?? null,
       );
     } catch (error) {
       setExportError(message(error));
@@ -390,9 +501,11 @@ function useAppStore() {
     // playlist
     url, setUrl, pasted, setPasted, playlist, playlistNote, playlistError,
     fetching, matching, matchError, fetchPlaylist, usePastedList, runMatch,
+    // wedding couples
+    couples, activeCouple, refreshCouples, loadCoupleChapter,
     // matches
-    results, selections, remembered, rememberNote, chooseVersion, rowStatus,
-    unresolvedCount,
+    results, selections, remembered, rememberNote, chooseVersion, resetChoice,
+    rowStatus, unresolvedCount,
     // export
     name, setName, exportError, chosenIds, leftOut, runExport, runMissingExport,
   };
