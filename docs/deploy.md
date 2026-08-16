@@ -75,7 +75,30 @@ ssh deploy@YOUR_SERVER_IP "chmod 600 /opt/rekordmatch/.env && nano /opt/rekordma
 Set the domain and Spotify keys. CI rewrites `APP_IMAGE` on every deploy;
 leave the rest alone.
 
-### 5. TLS and the DJ password
+### 5a. If the box already runs nginx (this one does)
+
+`46.224.211.159` already serves `viktorvansteenweghen.com` through system
+nginx on 80/443, so the bundled Caddy stays **off** — it would fail to bind.
+Leave `COMPOSE_PROFILES` commented and use `deploy/nginx/rekord.conf` instead:
+same allow-list, nginx syntax.
+
+```bash
+scp deploy/nginx/rekord.conf root@SERVER:/etc/nginx/sites-available/rekord
+ssh root@SERVER "ln -sfn /etc/nginx/sites-available/rekord /etc/nginx/sites-enabled/rekord && nginx -t && systemctl reload nginx"
+```
+
+The password file is nginx's own format, not Caddy's bcrypt:
+
+```bash
+ssh root@SERVER "printf 'dj:%s
+' \"\$(openssl passwd -apr1 'your-password')\" > /etc/nginx/.htpasswd-rekord
+                 chmod 640 /etc/nginx/.htpasswd-rekord && chown root:www-data /etc/nginx/.htpasswd-rekord"
+```
+
+Note `nginx -t` before every reload — a bad config fails the test and leaves
+the running nginx untouched, so the other sites on the box stay up.
+
+### 5b. TLS and the DJ password (bundled Caddy)
 
 Uncomment `COMPOSE_PROFILES=proxy` and `APP_DOMAIN` in `.env` to use the
 bundled Caddy — it gets a Let's Encrypt cert on first boot, provided the A
