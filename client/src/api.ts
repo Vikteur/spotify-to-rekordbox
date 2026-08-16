@@ -1,5 +1,6 @@
 import type {
   CoupleDetail,
+  CoupleExportSummary,
   CoupleSummary,
   LibrarySummary,
   LibraryTrack,
@@ -122,6 +123,8 @@ export const api = {
   // wedding couples (DJ side)
   couples: () => request<{ couples: CoupleSummary[] }>('/api/couples'),
   couple: (id: number) => request<CoupleDetail>(`/api/couples/${id}`),
+  coupleExportSummary: (id: number) =>
+    request<CoupleExportSummary>(`/api/couples/${id}/export/summary`),
   createCouple: (names: string, weddingDate: string) =>
     request<CoupleDetail>('/api/couples', {
       method: 'POST',
@@ -147,11 +150,18 @@ export const api = {
 };
 
 async function download(path: string, body: unknown, filename: string): Promise<void> {
-  const response = await fetch(path, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
+  // The per-couple exports take no body: everything they need is the couple id
+  // in the path, so they're plain GETs.
+  const response = await fetch(
+    path,
+    body === undefined
+      ? {}
+      : {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        },
+  );
   if (!response.ok) {
     const detail = (await response.json()).detail;
     throw new ApiError(response.status, detail?.code ?? 'UNKNOWN', detail?.message ?? 'Export failed');
@@ -189,6 +199,24 @@ export function downloadMissing(
     '/api/export/missing',
     { name, tracks, couple_id: coupleId },
     `${name.trim() || 'playlist'} - missing.txt`,
+  );
+}
+
+/** One rekordbox folder for the wedding: a playlist per chapter, in set order. */
+export function downloadCoupleExport(coupleId: number, folder: string): Promise<void> {
+  return download(
+    `/api/couples/${coupleId}/export/rekordbox.xml`,
+    undefined,
+    `${folder}.xml`,
+  );
+}
+
+/** Every song they asked for that isn't in the library yet — the download list. */
+export function downloadCoupleMissing(coupleId: number, folder: string): Promise<void> {
+  return download(
+    `/api/couples/${coupleId}/export/missing.txt`,
+    undefined,
+    `${folder} - missing.txt`,
   );
 }
 

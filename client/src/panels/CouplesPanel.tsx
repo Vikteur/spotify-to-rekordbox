@@ -1,8 +1,13 @@
 import { useEffect, useState } from 'react';
-import { ApiError, api } from '../api';
+import { ApiError, api, downloadCoupleExport, downloadCoupleMissing } from '../api';
 import { formatDuration } from '../format';
 import { useApp } from '../store';
-import type { CoupleDetail, CoupleEntry, ListKind } from '../types';
+import type {
+  CoupleDetail,
+  CoupleEntry,
+  CoupleExportSummary,
+  ListKind,
+} from '../types';
 import { useUi } from '../ui/UiContext';
 import { Panel } from './Panel';
 
@@ -89,6 +94,57 @@ export function CouplesPanel() {
   const [date, setDate] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [exportSummary, setExportSummary] = useState<CoupleExportSummary | null>(null);
+  const [exportNote, setExportNote] = useState('');
+
+
+  // Their lists stream in while the page is open, but re-matching the whole
+  // library on every poll would be wasteful — only redo it when the number of
+  // songs or never-list entries actually moved.
+  const songKey = detail
+    ? `${Object.values(detail.lists).reduce((n, list) => n + list.length, 0)}:${detail.blocklist.length}`
+    : '';
+  const coupleId = detail?.id ?? null;
+
+  useEffect(() => {
+    if (coupleId === null) {
+      setExportSummary(null);
+      return;
+    }
+    let alive = true;
+    api
+      .coupleExportSummary(coupleId)
+      .then((summary) => {
+        if (alive) {
+          setExportSummary(summary);
+          setExportNote('');
+        }
+      })
+      .catch((err) => {
+        if (!alive) return;
+        setExportSummary(null);
+        setExportNote(
+          err instanceof ApiError ? err.message : 'Could not read the export summary.',
+        );
+      });
+    return () => {
+      alive = false;
+    };
+  }, [coupleId, songKey]);
+
+  async function runExport(kind: 'xml' | 'missing') {
+    if (!exportSummary) return;
+    setExportNote('');
+    try {
+      if (kind === 'xml') {
+        await downloadCoupleExport(exportSummary.couple.id, exportSummary.folder);
+      } else {
+        await downloadCoupleMissing(exportSummary.couple.id, exportSummary.folder);
+      }
+    } catch (err) {
+      setExportNote(err instanceof ApiError ? err.message : 'Export failed.');
+    }
+  }
 
   // The couple answers from home — poll while their page is open so the
   // lists stream in live.
@@ -359,6 +415,57 @@ export function CouplesPanel() {
         <p className="hint">
           “Load &amp; match” drops the chapter into the match table — match and export it
           exactly like any playlist. Never-list songs are excluded automatically.
+        </p>
+      </section>
+
+      <section className="panel-section">
+        <h3 className="panel-section-title">Export for rekordbox</h3>
+        {exportSummary && exportSummary.playlists.length > 0 && (
+          <>
+            <p className="hint">
+              One folder — “{exportSummary.folder}” — with a playlist per chapter,
+              numbered so rekordbox keeps them in set order.
+            </p>
+            {exportSummary.playlists.map((playlist) => (
+              <div key={playlist.name} className="list-row">
+                <span className="list-main">{playlist.name}</span>
+                <span className="mono muted">{playlist.tracks}</span>
+              </div>
+            ))}
+          </>
+        )}
+        {exportSummary && exportSummary.playlists.length === 0 && (
+          <p className="muted">
+            Nothing of theirs is in “{exportSummary.library ?? 'this library'}” yet —
+            download the missing list, get the songs, then re-import your collection.
+          </p>
+        )}
+        {exportSummary && (
+          <p className="hint">
+            {exportSummary.matched} matched · {exportSummary.missing} still to find
+            {exportSummary.blocked > 0 && ` · ${exportSummary.blocked} on the never list`}
+          </p>
+        )}
+        <div className="field-row">
+          <button
+            className="btn btn-primary"
+            disabled={!exportSummary || exportSummary.matched === 0}
+            onClick={() => runExport('xml')}
+          >
+            Download rekordbox XML
+          </button>
+          <button
+            className="btn btn-sm"
+            disabled={!exportSummary || exportSummary.missing === 0}
+            onClick={() => runExport('missing')}
+          >
+            Download missing list
+          </button>
+        </div>
+        {exportNote && <p className="error">{exportNote}</p>}
+        <p className="hint">
+          rekordbox › Preferences › Advanced › Database › rekordbox xml → pick the
+          file, then right-click the folder in the rekordbox xml pane → Import Playlist.
         </p>
       </section>
 
