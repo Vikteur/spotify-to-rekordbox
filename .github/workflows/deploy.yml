@@ -123,6 +123,7 @@ jobs:
           APP_DIR="${APP_DIR:-/opt/rekordmatch}"
           scp -i ~/.ssh/id_deploy \
             deploy/docker-compose.yml deploy/Caddyfile deploy/deploy.sh \
+            deploy/nginx/rekord.conf \
             "${USER}@${HOST}:${APP_DIR}/"
 
       - name: Pull and restart
@@ -139,6 +140,29 @@ jobs:
             "docker login ghcr.io -u '${{ github.actor }}' --password-stdin"
           ssh -i ~/.ssh/id_deploy "${USER}@${HOST}" \
             "chmod +x '${APP_DIR}/deploy.sh' && APP_DIR='${APP_DIR}' '${APP_DIR}/deploy.sh' '${IMAGE}'"
+
+      # Runs after the app is healthy: the proxy should never be reloaded
+      # towards a container that just failed its health check and rolled back.
+      # The site config lives in git from here on — edit deploy/nginx/rekord.conf,
+      # not the copy on the box, or the next deploy will overwrite you.
+      - name: Install nginx config
+        env:
+          HOST: ${{ secrets.HETZNER_HOST }}
+          USER: ${{ secrets.HETZNER_USER }}
+        run: |
+          ssh -i ~/.ssh/id_deploy "${USER}@${HOST}" bash -s <<'REMOTE'
+          set -euo pipefail
+          INSTALLER=/usr/local/sbin/rekord-nginx-install
+          if [ ! -x "$INSTALLER" ]; then
+            echo "$INSTALLER is missing — re-run deploy/bootstrap.sh on this box" >&2
+            exit 1
+          fi
+          if [ "$(id -u)" -eq 0 ]; then
+            "$INSTALLER"
+          else
+            sudo -n "$INSTALLER"
+          fi
+          REMOTE
 
       - name: Summary
         if: always()

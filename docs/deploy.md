@@ -82,6 +82,20 @@ nginx on 80/443, so the bundled Caddy stays **off** — it would fail to bind.
 Leave `COMPOSE_PROFILES` commented and use `deploy/nginx/rekord.conf` instead:
 same allow-list, nginx syntax.
 
+**CI ships this file now.** Every deploy scp's `deploy/nginx/rekord.conf` to
+`$APP_DIR` and runs `/usr/local/sbin/rekord-nginx-install`, which installs it,
+runs `nginx -t`, reloads — and restores the previous config if the test fails.
+So edit `deploy/nginx/rekord.conf` in git, never the copy on the box: the next
+deploy overwrites anything you change by hand.
+
+That installer is root-owned and created by `bootstrap.sh`, together with a
+sudoers rule letting the deploy user run that one command and nothing else. It
+takes no arguments, so the grant cannot be aimed at any other file. **Re-run
+`bootstrap.sh` once on an existing box** to pick it up — until you do, the
+deploy's `Install nginx config` step fails and tells you so.
+
+To install it by hand (first boot, or break-glass while CI is down):
+
 ```bash
 scp deploy/nginx/rekord.conf root@SERVER:/etc/nginx/sites-available/rekord
 ssh root@SERVER "ln -sfn /etc/nginx/sites-available/rekord /etc/nginx/sites-enabled/rekord && nginx -t && systemctl reload nginx"
