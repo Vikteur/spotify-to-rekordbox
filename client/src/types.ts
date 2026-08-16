@@ -243,3 +243,13 @@ export interface CoupleDetail {
   blocklist: BlockEntry[];
   changes: CoupleChange[];
 }
+
+export interface CoupleExportSummary {
+  couple: { id: number; names: string; wedding_date: string };
+  folder: string;              // "Sofie & Jan 2026-09-12" — the rekordbox folder
+  library: string | null;
+  playlists: { name: string; tracks: number }[];
+  matched: number;
+  missing: number;             // requested songs this library doesn't have
+  blocked: number;             // dropped by the never list
+}

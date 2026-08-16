@@ -12,7 +12,16 @@ from server import couples, db
 from server.couples_api import router as couples_router
 from server.export.m3u8 import build_m3u8
 from server.export.missing import build_missing_txt
-from server.export.rekordbox_xml import build_rekordbox_xml
+from server.export.couple import (
+    CHAPTER_ORDER,
+    chapter_name,
+    entry_inputs,
+    folder_label,
+)
+from server.export.rekordbox_xml import (
+    build_rekordbox_folder_xml,
+    build_rekordbox_xml,
+)
 from server.library import LIBRARY
 from server.matcher.index import LibraryIndex
 from server.matcher.match import match_playlist
@@ -427,7 +436,10 @@ def forget_all_preferences() -> dict:
 
 
 def _safe_filename(name: str) -> str:
-    cleaned = re.sub(r"[^\w \-]", "", name, flags=re.ASCII).strip()
+    cleaned = re.sub(r"[^\w \-]", "", name, flags=re.ASCII)
+    # Dropping a character mid-name would otherwise leave a gap: "Sofie & Jan"
+    # became "Sofie  Jan" with a double space in the download filename.
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
     return cleaned or "playlist"
 
 
@@ -496,6 +508,142 @@ def export_missing(request: MissingExportRequest) -> Response:
         headers={
             "Content-Disposition": f'attachment; filename="{stem} - missing.txt"'
         },
+    )
+
+
+# --- per-couple export ------------------------------------------------------
+
+def _couple_chapters(couple_id: int) -> tuple[list, list[MissingTrackInput], int]:
+    """Match a couple's chapters against the active library.
+
+    Returns (playlists, missing, blocked_count). Chapters that resolve to
+    nothing are dropped rather than exported empty — rekordbox showing an
+    empty "03 Their top 20" would read as "they asked for nothing", which is
+    the opposite of the truth.
+
+    Only confident (auto-selected) matches go into a playlist. Anything the
+    matcher wasn't sure about lands in `missing` instead, because a wrong file
+    on the night is worse than a song the DJ knows to go and find.
+    """
+    lists = couples.list_entries(couple_id)
+    index = _get_index()
+    preferences = db.preference_map(LIBRARY.id)
+    membership = db.playlist_membership(LIBRARY.id)
+    blocked_keys = couples.blocked_keys(couple_id)
+
+    playlists: list[tuple[str, list]] = []
+    missing: list[MissingTrackInput] = []
+    seen_missing: set[tuple[str, str]] = set()
+    blocked_count = 0
+    position = 0
+
+    for kind in CHAPTER_ORDER:
+        inputs = entry_inputs(lists.get(kind) or [])
+        if not inputs:
+            continue
+        tracks = []
+        for result in match_playlist(inputs, index, preferences, membership):
+            artist, title = result.input.artist, result.input.title
+            if couples.is_blocked(artist, title, blocked_keys):
+                blocked_count += 1
+                continue
+            track = (
+                LIBRARY.by_id.get(result.auto_selected_id)
+                if result.auto_selected_id
+                else None
+            )
+            if track is None:
+                key = (artist.strip().lower(), title.strip().lower())
+                if key not in seen_missing:   # the same song can sit in two chapters
+                    seen_missing.add(key)
+                    missing.append(
+                        MissingTrackInput(
+                            artist=artist,
+                            title=title,
+                            had_candidates=bool(result.candidates),
+                        )
+                    )
+                continue
+            tracks.append(track)
+        if tracks:
+            position += 1
+            playlists.append((chapter_name(position, kind), tracks))
+    return playlists, missing, blocked_count
+
+
+def _require_couple_and_library(couple_id: int):
+    couple = couples.get_couple(couple_id)
+    if couple is None:
+        raise _error(404, "NO_COUPLE", f"No couple with id {couple_id}.")
+    if not LIBRARY.is_loaded():
+        raise _error(
+            409,
+            "NO_LIBRARY",
+            "Import your rekordbox collection first — requests are matched against it.",
+        )
+    return couple
+
+
+@app.get("/api/couples/{couple_id}/export/summary")
+def couple_export_summary(couple_id: int) -> dict:
+    """What the export would contain, so the DJ sees it before downloading."""
+    couple = _require_couple_and_library(couple_id)
+    playlists, missing, blocked = _couple_chapters(couple_id)
+    return {
+        "couple": {
+            "id": couple["id"],
+            "names": couple["names"],
+            "wedding_date": couple["wedding_date"],
+        },
+        "folder": folder_label(couple["names"], couple["wedding_date"]),
+        "library": LIBRARY.name,
+        "playlists": [
+            {"name": name, "tracks": len(tracks)} for name, tracks in playlists
+        ],
+        "matched": sum(len(tracks) for _, tracks in playlists),
+        "missing": len(missing),
+        "blocked": blocked,
+    }
+
+
+@app.get("/api/couples/{couple_id}/export/rekordbox.xml")
+def couple_export_xml(couple_id: int) -> Response:
+    """One folder, one playlist per chapter — the whole wedding in one import."""
+    couple = _require_couple_and_library(couple_id)
+    playlists, _, _ = _couple_chapters(couple_id)
+    if not playlists:
+        raise _error(
+            400,
+            "NOTHING_MATCHED",
+            "None of their songs are in this library yet — export the missing "
+            "list instead, then re-import your collection once you have them.",
+        )
+    folder = folder_label(couple["names"], couple["wedding_date"])
+    content = build_rekordbox_folder_xml(folder, playlists)
+    stem = _safe_filename(folder)
+    return Response(
+        content=content.encode("utf-8"),
+        media_type="application/xml; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{stem}.xml"'},
+    )
+
+
+@app.get("/api/couples/{couple_id}/export/missing.txt")
+def couple_export_missing(couple_id: int) -> Response:
+    """Every requested song this library doesn't have — the download list."""
+    couple = _require_couple_and_library(couple_id)
+    _, missing, _ = _couple_chapters(couple_id)
+    if not missing:
+        raise _error(
+            400, "NOTHING_MISSING", "You already have every song they asked for."
+        )
+    folder = folder_label(couple["names"], couple["wedding_date"])
+    content = build_missing_txt(folder, LIBRARY.name, missing)
+    stem = _safe_filename(folder)
+    return Response(
+        content=content.encode("utf-8"),
+        media_type="text/plain; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{stem} - missing.txt"'},
     )
 
 
