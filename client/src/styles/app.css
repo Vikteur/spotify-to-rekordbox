@@ -1008,6 +1008,10 @@ textarea {
 .panel-overlay {
   position: fixed;
   inset: 0;
+  /* Stop short of the sidebar so nav stays clickable while a panel is open —
+     and undimmed, because dimming something still usable reads as disabled.
+     Clicking the dimmed area to the right still closes the panel. */
+  left: var(--sidebar-w);
   z-index: 50;
   background: var(--overlay);
   display: flex;
