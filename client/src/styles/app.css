@@ -1213,3 +1213,21 @@ textarea {
 .skipped-list li {
   overflow-wrap: anywhere;
 }
+
+/* A nav section label that is also a link to its panel. */
+.nav-label-link {
+  border: 0;
+  padding: 0;
+  background: none;
+  cursor: pointer;
+  font: inherit;
+  font-family: var(--font-mono);
+  font-weight: 600;
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  color: var(--muted-6);
+}
+.nav-label-link:hover,
+.nav-label-link.active {
+  color: var(--text);
+}

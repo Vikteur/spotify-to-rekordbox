@@ -119,7 +119,16 @@ export function Sidebar() {
       {/* Wedding couples — their intake lists stream in behind magic links */}
       <div className="nav-section">
         <div className="nav-head">
-          <span className="nav-label">COUPLES</span>
+          {/* The label itself opens the overview; + New jumps to the form. */}
+          <button
+            className={`nav-label nav-label-link ${
+              ui.activePanel === 'couples' && !s.activeCouple ? 'active' : ''
+            }`}
+            title="Open the couples panel"
+            onClick={() => ui.openPanel('couples')}
+          >
+            COUPLES
+          </button>
           <button
             className="nav-add"
             title="Create a couple and their magic links"
