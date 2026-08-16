@@ -4,6 +4,7 @@ import pytest
 
 from server.export.m3u8 import build_m3u8
 from server.export.missing import build_missing_txt
+from server.export.skipped import build_skipped_txt
 from server.export.rekordbox_xml import build_rekordbox_xml, path_to_location
 from server.models import LibraryTrack, MissingTrackInput
 
@@ -87,6 +88,32 @@ def test_rekordbox_xml_structure_roundtrip() -> None:
 
 def missing(artist: str, title: str, had_candidates: bool = False) -> MissingTrackInput:
     return MissingTrackInput(artist=artist, title=title, had_candidates=had_candidates)
+
+
+def test_skipped_txt_separates_buy_from_repair() -> None:
+    text = build_skipped_txt(
+        "/music",
+        ["/music/iTunes/locked.m4p"],
+        1,
+        [{"file": "/music/broken.mp3", "message": "can't sync to MPEG frame"}],
+    )
+    assert "# Folder: /music" in text
+    assert "DRM-protected" in text and "(1)" in text
+    assert "/music/iTunes/locked.m4p" in text
+    assert "Could not be read" in text
+    # Reason travels with the path, tab-separated so it opens as two columns.
+    assert "/music/broken.mp3\tcan't sync to MPEG frame" in text
+
+
+def test_skipped_txt_reports_a_truncated_drm_list() -> None:
+    text = build_skipped_txt("/music", ["/music/a.m4p"], 500, [])
+    assert "...and 499 more" in text
+    assert "# (none)" in text  # the unreadable section is empty but still labelled
+
+
+def test_skipped_txt_handles_an_unreadable_folder_with_no_file() -> None:
+    text = build_skipped_txt("/music", [], 0, [{"file": "", "message": "Permission denied"}])
+    assert "(folder)\tPermission denied" in text
 
 
 def test_missing_txt_lists_tracks_you_can_paste_into_a_shop() -> None:

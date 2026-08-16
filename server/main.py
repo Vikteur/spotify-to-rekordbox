@@ -12,6 +12,7 @@ from server import couples, db
 from server.couples_api import router as couples_router
 from server.export.m3u8 import build_m3u8
 from server.export.missing import build_missing_txt
+from server.export.skipped import build_skipped_txt
 from server.export.rekordbox_xml import build_rekordbox_xml
 from server.library import LIBRARY
 from server.matcher.index import LibraryIndex
@@ -476,6 +477,28 @@ def export(request: ExportRequest) -> Response:
         content=content.encode("utf-8"),
         media_type=media_type,
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.get("/api/export/skipped")
+def export_skipped() -> Response:
+    """What the last scan could not use: DRM-locked and unreadable files."""
+    status = SCANNER.status()
+    scanned = status.get("scanned") or {}
+    errors = status.get("errors") or []
+    drm_files = scanned.get("skipped_drm_files") or []
+    drm_total = scanned.get("skipped_drm", 0)
+    if not drm_files and not errors:
+        raise _error(
+            400, "NOTHING_SKIPPED", "The last scan skipped nothing — there's no list."
+        )
+    content = build_skipped_txt(
+        scanned.get("folder", "(unknown folder)"), drm_files, drm_total, errors
+    )
+    return Response(
+        content=content.encode("utf-8"),
+        media_type="text/plain; charset=utf-8",
+        headers={"Content-Disposition": 'attachment; filename="skipped files.txt"'},
     )
 
 

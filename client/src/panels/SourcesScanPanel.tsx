@@ -118,6 +118,15 @@ export function SourcesScanPanel() {
             <p className="muted">
               Scanned {scanned.track_count.toLocaleString()} files in {(scanned.scan_ms / 1000).toFixed(1)}s
               {scanned.from_cache > 0 && ` (${scanned.from_cache.toLocaleString()} unchanged)`}
+              {(scanned.skipped_drm > 0 || (scan?.errors?.length ?? 0) > 0) && (
+                <>
+                  {' — '}
+                  {/* Plain GET: the server already holds the last scan's result. */}
+                  <a href="/api/export/skipped" download="skipped files.txt">
+                    download the skipped list (.txt)
+                  </a>
+                </>
+              )}
             </p>
             {scanned.skipped_drm > 0 && (
               <details className="skipped-list">

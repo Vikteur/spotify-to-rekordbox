@@ -566,6 +566,31 @@ def test_spotify_route_fetch_failure_hints_paste(
     assert "paste" in detail["message"].lower()
 
 
+def test_export_skipped_files_txt(client: TestClient, library: Path) -> None:
+    scan_and_wait(client, library)
+    response = client.get("/api/export/skipped")
+    assert response.status_code == 200
+    assert response.headers["content-disposition"] == (
+        'attachment; filename="skipped files.txt"'
+    )
+    body = response.text
+    assert "old-purchase.m4p" in body          # the DRM one, named
+    assert "corrupt.mp3" in body               # the unreadable one, named
+    assert "can't sync to MPEG frame" in body  # with its reason
+
+
+def test_export_skipped_when_nothing_was_skipped(
+    client: TestClient, tmp_path: Path
+) -> None:
+    clean = tmp_path / "clean"
+    (clean / "House").mkdir(parents=True)
+    write_mp3(clean / "House" / "fine.mp3", artist="A", title="Fine")
+    scan_and_wait(client, clean)
+    response = client.get("/api/export/skipped")
+    assert response.status_code == 400
+    assert response.json()["detail"]["code"] == "NOTHING_SKIPPED"
+
+
 def test_export_missing_tracks_txt(client: TestClient, library: Path) -> None:
     scan_and_wait(client, library)
     response = client.post(

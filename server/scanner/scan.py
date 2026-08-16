@@ -11,7 +11,7 @@ from server.scanner.tags import read_track
 from server.scanner.walk import walk_library
 
 PARSE_WORKERS = 8
-LISTED_FILES = 200   # how many skipped paths to hand back for display
+LISTED_FILES = 2000  # how many skipped paths to hand back for display/download
 
 
 class ScanInProgress(Exception):
