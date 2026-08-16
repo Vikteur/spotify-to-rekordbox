@@ -45,7 +45,18 @@ npm run build
 npm start          # → open http://127.0.0.1:8000
 ```
 
-Both need the venv active (the server runs via `python -m uvicorn`). The server binds to `127.0.0.1` only — it can read your local folders, so never expose it on a network.
+Both need the venv active (the server runs via `python -m ...`). The server binds to `127.0.0.1` only — it can read your local folders, so never expose it on a network.
+
+**The DJ app has no login.** No account, no sign-in, no Spotify authentication — open `/` and you are straight in. The only gated route is `/g/<token>`, the magic link you hand to a couple or their guests for the wedding intake; a token there is what a guest gets, not something you need.
+
+So if `/` asks you to sign in, you are looking at a *different program*. The usual cause is something else already sitting on port 8000 (Docker dashboards, other dev servers and admin panels all like that port), so your browser shows you *its* page instead. The app now refuses to start in that case and says so; to move it out of the way:
+
+```bash
+PORT=8010 npm run dev          # macOS / Linux
+$env:PORT=8010; npm run dev    # Windows PowerShell
+```
+
+Both halves follow `PORT`. To see what's holding it: `lsof -i :8000` (macOS/Linux) or `netstat -ano | findstr :8000` (Windows).
 
 ## Your libraries
 

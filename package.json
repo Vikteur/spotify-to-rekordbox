@@ -5,9 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "concurrently -k -n api,web -c blue,green \"npm run dev:api\" \"vite\"",
-    "dev:api": "python -m uvicorn server.main:app --reload --port 8000",
+    "dev:api": "python -m server.run --reload",
     "build": "tsc --noEmit && vite build",
-    "start": "python -m uvicorn server.main:app --port 8000",
+    "start": "python -m server.run",
     "typecheck": "tsc --noEmit",
     "test:e2e": "node tests/e2e-matches.mjs"
   },
@@ -16,6 +16,7 @@
     "react-dom": "^18.3.1"
   },
   "devDependencies": {
+    "@types/node": "^26.2.0",
     "@types/react": "^18.3.5",
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^5.0.0",
