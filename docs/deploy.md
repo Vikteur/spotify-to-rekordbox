@@ -90,8 +90,7 @@ ssh root@SERVER "ln -sfn /etc/nginx/sites-available/rekord /etc/nginx/sites-enab
 The password file is nginx's own format, not Caddy's bcrypt:
 
 ```bash
-ssh root@SERVER "printf 'dj:%s
-' \"\$(openssl passwd -apr1 'your-password')\" > /etc/nginx/.htpasswd-rekord
+ssh root@SERVER "printf 'dj:%s\n' \"\$(openssl passwd -apr1 'your-password')\" > /etc/nginx/.htpasswd-rekord
                  chmod 640 /etc/nginx/.htpasswd-rekord && chown root:www-data /etc/nginx/.htpasswd-rekord"
 ```
 
