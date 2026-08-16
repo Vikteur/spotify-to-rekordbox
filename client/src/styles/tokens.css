@@ -1,0 +1,163 @@
+/*
+ * Design tokens for the two themes shipped from Claude Design (turn 6):
+ *   6a "Productized light"  -> [data-theme="light"] (default)
+ *   6b "Booth mode dark"    -> [data-theme="dark"]
+ *
+ * Every colour the components use is a named token here, so flipping
+ * `document.documentElement.dataset.theme` re-themes the whole app with no
+ * JS restyling. See client/src/theme/useTheme.ts.
+ */
+
+:root {
+  /* Typography — theme independent */
+  --font-brand: 'Space Grotesk', system-ui, sans-serif; /* brand mark + H1 only */
+  --font-ui: 'DM Sans', system-ui, Helvetica, sans-serif; /* all body UI */
+  --font-mono: 'JetBrains Mono', ui-monospace, Menlo, monospace; /* counts, metadata, kbd */
+
+  /* Shape — theme independent */
+  --radius-tile: 5px;
+  --radius: 7px;
+  --radius-card: 8px;
+  --radius-pill: 999px;
+  --sidebar-w: 212px;
+  --grid-cols: 26px 1fr 118px 150px 24px; /* #, TRACK, ANALYSIS, MATCH, expander */
+}
+
+/* ------------------------------------------------------------------ LIGHT */
+:root,
+:root[data-theme='light'] {
+  --bg: #ffffff;
+  --text: #181c22;
+  --heading: #181c22;
+
+  --sidebar-bg: #f7f8fa;
+  --sidebar-border: #e7eaee;
+
+  --accent: #2e6bff;
+  --accent-hover: #1d55e0;
+  --accent-btn: #2e6bff;
+  --accent-btn-hover: #1d55e0;
+  --accent-text: #2e6bff;
+  --accent-text-2: #1d55e0;
+  --accent-shadow: rgba(46, 107, 255, 0.35);
+
+  --panel: #ffffff;
+  --panel-2: #ffffff;
+  --card: #ffffff;
+
+  --border-1: #e3e6ea;
+  --border-2: #e7eaee;
+  --border-3: #eef0f4;
+  --border-4: #f2f4f7;
+
+  --muted-1: #57606b;
+  --muted-2: #5b626b;
+  --muted-3: #7b838d;
+  --muted-4: #8a919b;
+  --muted-5: #98a0aa;
+  --muted-6: #a3aab4;
+  --muted-7: #b6bcc6;
+  --meta-strong: #4a515a;
+  --meta-strongest: #3f454d;
+  --meta-faint: #c2c8cf;
+
+  --ok: #22b573;
+  --ok-text: #17945a;
+  --ok-bg: #e7f6ee;
+  --danger: #e05a41;
+  --danger-text: #c8442e;
+  --danger-bg: #fdeeea;
+
+  --badge-blue-bg: #e9efff;
+  --badge-blue-text: #1d55e0;
+  --badge-grey-bg: #f1f3f6;
+  --badge-grey-text: #57606b;
+  --badge-skip-bg: #f2f2f4;
+  --badge-skip-text: #8e8e97;
+  --badge-skip-dot: #b9b9c0;
+
+  --track-bar-track: #edf0f4;
+  --row-hover: #fafbfc;
+  --row-selected-a: #f8faff;
+  --row-selected-b: #f4f7ff;
+  --segment-bg: #f1f3f6;
+  --segment-active: #ffffff;
+  --segment-shadow: rgba(15, 23, 42, 0.08);
+
+  --kbd-bg: #f1f3f6;
+  --kbd-border: #e3e6ea;
+  --kbd-text: #8a919b;
+
+  --card-shadow: rgba(15, 23, 42, 0.04);
+  --overlay: rgba(24, 28, 34, 0.28);
+  --panel-shadow: rgba(15, 23, 42, 0.18);
+}
+
+/* ------------------------------------------------------------------- DARK */
+:root[data-theme='dark'] {
+  --bg: #0e1116;
+  --text: #e9ecf2;
+  --heading: #ffffff;
+
+  --sidebar-bg: #0b0e12;
+  --sidebar-border: #1c212a;
+
+  --accent: #5e8bff;
+  --accent-hover: #7ea2ff;
+  --accent-btn: #3b74ff;
+  --accent-btn-hover: #548aff;
+  --accent-text: #8fadff;
+  --accent-text-2: #7ea2ff;
+  --accent-shadow: rgba(59, 116, 255, 0.35);
+
+  --panel: #151b26;
+  --panel-2: #12161e;
+  --card: #151a22;
+
+  --border-1: #242c39;
+  --border-2: #1c212a;
+  --border-3: #171c24;
+  --border-4: #2a3240;
+
+  --muted-1: #c3cad6;
+  --muted-2: #b9c0cc;
+  --muted-3: #9aa4b2;
+  --muted-4: #8a93a2;
+  --muted-5: #7d8694;
+  --muted-6: #5d6673;
+  --muted-7: #4d5560;
+  --meta-strong: #9aa4b2;
+  --meta-strongest: #c3cad6;
+  --meta-faint: #3a4350;
+
+  --ok: #45d392;
+  --ok-text: #45d392;
+  --ok-bg: rgba(62, 207, 142, 0.13);
+  --danger: #ff6e54;
+  --danger-text: #ff8a70;
+  --danger-bg: rgba(255, 110, 84, 0.13);
+
+  --badge-blue-bg: rgba(94, 139, 255, 0.16);
+  --badge-blue-text: #8fadff;
+  --badge-grey-bg: #1b212b;
+  --badge-grey-text: #9aa4b2;
+  --badge-skip-bg: #1a1e25;
+  --badge-skip-text: #737d8a;
+  --badge-skip-dot: #4d5560;
+
+  --track-bar-track: #232a35;
+  --row-hover: #11151c;
+  --row-selected-a: rgba(94, 139, 255, 0.06);
+  --row-selected-b: rgba(94, 139, 255, 0.06);
+  --segment-bg: #151a22;
+  --segment-active: #262e3b;
+  --segment-shadow: rgba(0, 0, 0, 0.3);
+
+  --kbd-bg: #1b212b;
+  --kbd-border: #2a3240;
+  --kbd-text: #8a93a2;
+
+  --card-shadow: rgba(0, 0, 0, 0.3);
+  --overlay: rgba(0, 0, 0, 0.5);
+  --panel-shadow: rgba(0, 0, 0, 0.55);
+}

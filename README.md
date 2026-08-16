@@ -90,6 +90,39 @@ Click a playlist row to fold it open and see exactly what it contains, in the or
 
   The choice is keyed on artist + core title + version, so it survives whichever way you load the playlist (Spotify link or pasted text), and different versions stay independent: teaching it your favourite *Strobe* says nothing about *Strobe (Radio Edit)*. Featured artists are ignored in that key, because playlists list them inconsistently. Choices also survive removing a library source — if the file comes back, so does the preference. They are **per library**, so each device learns its own.
 
+## Wedding couples (guest intake)
+
+For wedding gigs the app carries one record per couple. **COUPLES › New** in the sidebar creates it (names + wedding date) and issues two **magic links**:
+
+- **Couple link** — the full eight-page intake: welcome, opening dance (with start preference and a note to you), second & third song, their top 20, a reveal page, the friends' top 20, the never list, and the finale (up to five must-plays, a "how we party" briefing, pasted playlist links).
+- **Friends link** — one shared link, scoped to the friends' top 20 only. Friends see each other's picks and fill the 20 spots together, but can't remove or reorder anything — and they see nothing else of the couple's answers.
+
+Every answer autosaves instantly (idempotent writes, retried on flaky connections, flushed when the tab closes), so the couple can stop mid-page at your first meeting and finish from their couch. Links stop working the day after the wedding and can be **revoked** or **rotated** (new link, old one dies) from the couple's panel at any time.
+
+Their answers stream into your side live. Each chapter is a list under the couple — **Load & match** drops it into the normal match table, so matching against your library and exporting to rekordbox works exactly like any playlist. The **never list is a blocklist**: its songs (every version of them) are stripped from every export for that couple, server-side. The change log shows where each song came from (couple vs friends link).
+
+### Spotify song search for guests
+
+The song fields in the intake are typeahead searches backed by Spotify's official API via a **server-side proxy** — the secret never reaches a browser, guests are rate-limited, repeated queries are cached, and only **metadata** (title, artist, duration, ISRC, artwork URL) is ever fetched — no audio, ever. Create a (free) app at <https://developer.spotify.com/dashboard> and provide its credentials either as environment variables:
+
+```bash
+SPOTIFY_CLIENT_ID=...      SPOTIFY_CLIENT_SECRET=...
+```
+
+or in `data/spotify_credentials.json`:
+
+```json
+{ "client_id": "...", "client_secret": "..." }
+```
+
+Without credentials the intake still works — song fields simply save whatever guests type, flagged "as typed", and you resolve them at matching time. Songs not on Spotify always have that same free-text fallback.
+
+Guests reach the app at `http://<your-host>/g/<token>`, served by the same server (`npm run build` + `npm start`). The server binds to `127.0.0.1` by default; to let a couple answer from home you need to expose it deliberately (a tunnel like `cloudflared`/`ngrok`, or a small VPS) — the magic-link tokens are the only access control, so use HTTPS.
+
+```bash
+node scripts/couple-intake-check.mjs   # end-to-end check: walks the whole intake in a real browser
+```
+
 ## Importing into rekordbox
 
 **M3U8 (recommended):** rekordbox → `File › Import › Import Playlist` → pick the downloaded `.m3u8`. Tracks already in your collection are matched by file path (cues/grids untouched); new files are added and analyzed.

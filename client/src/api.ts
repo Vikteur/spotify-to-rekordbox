@@ -1,4 +1,6 @@
 import type {
+  CoupleDetail,
+  CoupleSummary,
   LibrarySummary,
   LibraryTrack,
   MatchResult,
@@ -117,6 +119,31 @@ export const api = {
     request<{ preferences: Preference[] }>(`/api/preferences/${id}`, { method: 'DELETE' }),
   forgetAllChoices: () =>
     request<{ preferences: Preference[] }>('/api/preferences', { method: 'DELETE' }),
+  // wedding couples (DJ side)
+  couples: () => request<{ couples: CoupleSummary[] }>('/api/couples'),
+  couple: (id: number) => request<CoupleDetail>(`/api/couples/${id}`),
+  createCouple: (names: string, weddingDate: string) =>
+    request<CoupleDetail>('/api/couples', {
+      method: 'POST',
+      body: JSON.stringify({ names, wedding_date: weddingDate }),
+    }),
+  updateCouple: (
+    id: number,
+    fields: { names?: string; wedding_date?: string; briefing_text?: string },
+  ) =>
+    request<CoupleDetail>(`/api/couples/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(fields),
+    }),
+  deleteCouple: (id: number) =>
+    request<{ couples: CoupleSummary[] }>(`/api/couples/${id}`, { method: 'DELETE' }),
+  rotateCoupleToken: (id: number, kind: 'couple' | 'friends') =>
+    request<CoupleDetail>(`/api/couples/${id}/tokens/${kind}/rotate`, { method: 'POST' }),
+  revokeCoupleToken: (id: number, kind: 'couple' | 'friends', revoked: boolean) =>
+    request<CoupleDetail>(`/api/couples/${id}/tokens/${kind}/revoke`, {
+      method: 'POST',
+      body: JSON.stringify({ revoked }),
+    }),
 };
 
 async function download(path: string, body: unknown, filename: string): Promise<void> {
@@ -143,11 +170,12 @@ export function downloadExport(
   name: string,
   format: 'm3u8' | 'xml',
   trackIds: string[],
+  coupleId: number | null = null,
 ): Promise<void> {
   const stem = name.trim() || 'playlist';
   return download(
     '/api/export',
-    { name, format, track_ids: trackIds },
+    { name, format, track_ids: trackIds, couple_id: coupleId },
     `${stem}.${format === 'xml' ? 'rekordbox.xml' : 'm3u8'}`,
   );
 }
@@ -155,10 +183,11 @@ export function downloadExport(
 export function downloadMissing(
   name: string,
   tracks: { artist: string; title: string; had_candidates: boolean }[],
+  coupleId: number | null = null,
 ): Promise<void> {
   return download(
     '/api/export/missing',
-    { name, tracks },
+    { name, tracks, couple_id: coupleId },
     `${name.trim() || 'playlist'} - missing.txt`,
   );
 }
